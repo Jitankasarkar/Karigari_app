@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "474580987261",
+    "project_id": "karigariapp-b67b9",
+    "storage_bucket": "karigariapp-b67b9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:474580987261:android:2d5f0f63fcc70bdb79b014",
+        "android_client_info": {
+          "package_name": "com.example.proto_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDgxTMt4NmixAtuDV28lZON9hOYlBZzsbA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
