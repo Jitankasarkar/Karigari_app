@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:lottie/lottie.dart';
 import 'package:proto_app/product_page.dart';
-// <- make sure this points to your product page file
 
 class ConfirmPage extends StatelessWidget {
   const ConfirmPage({super.key});
@@ -20,8 +20,15 @@ class ConfirmPage extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.check_circle,
-                  color: Colors.green, size: 80),
+              // Lottie animation instead of Icon
+              SizedBox(
+                height: 160,
+                width: 160,
+                child: Lottie.asset(
+                  'assets/lottie/Success.json',
+                  repeat: false,
+                ),
+              ),
               const SizedBox(height: 20),
               const Text(
                 "Thank you for your purchase!",
@@ -46,8 +53,8 @@ class ConfirmPage extends StatelessWidget {
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color.fromARGB(255, 228, 128, 47),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 24, vertical: 14),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),

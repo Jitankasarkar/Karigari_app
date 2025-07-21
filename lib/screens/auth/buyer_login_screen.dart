@@ -41,7 +41,7 @@ class _BuyerLoginScreenState extends State<BuyerLoginScreen> {
       context: context,
       builder: (context) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        backgroundColor: Colors.white,
+        backgroundColor: const Color.fromARGB(255, 255, 255, 255),
         elevation: 10,
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -85,7 +85,7 @@ class _BuyerLoginScreenState extends State<BuyerLoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F6F2),
+      backgroundColor: const Color.fromARGB(251, 219, 218, 216),
       body: Stack(
         children: [
           SafeArea(
@@ -115,7 +115,7 @@ class _BuyerLoginScreenState extends State<BuyerLoginScreen> {
                       "Login to continue",
                       style: TextStyle(
                         fontSize: 16,
-                        color: Colors.grey,
+                        color: Color.fromARGB(255, 126, 126, 126),
                       ),
                     ),
                     const SizedBox(height: 30),

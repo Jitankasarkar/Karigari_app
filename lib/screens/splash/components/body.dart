@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-// import 'package:proto_app/screens/auth/buyer_login_screen.dart';
-// import 'package:proto_app/constants.dart';
+import 'package:lottie/lottie.dart';
 import 'package:proto_app/size_config.dart';
 import 'package:proto_app/admin_login.dart';
-import 'package:proto_app/user_type_page.dart'; // <-- Admin login screen
+import 'package:proto_app/user_type_page.dart';
 
 class Body extends StatefulWidget {
+  const Body({super.key});
   @override
   _BodyState createState() => _BodyState();
 }
@@ -13,13 +13,24 @@ class Body extends StatefulWidget {
 class _BodyState extends State<Body> {
   @override
   Widget build(BuildContext context) {
-    SizeConfig().init(context); // initialize SizeConfig
+    SizeConfig().init(context);
 
     return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: getProportionateScreenWidth(20)),
-        child: SizedBox(
-          width: double.infinity,
+      child: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color.fromARGB(255, 255, 255, 255), // Orange
+              Color.fromARGB(255, 255, 255, 255), // Light Cream/White
+            ],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: getProportionateScreenWidth(20)),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -41,20 +52,23 @@ class _BodyState extends State<Body> {
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: getProportionateScreenWidth(14),
-                      color: Colors.grey[700],
+                      color: Colors.grey[800],
                     ),
                   ),
                 ],
               ),
 
-              // Middle content (image)
-              Image.asset(
-                "assets/images/splash_1.jpg",
+              // Middle content (Lottie animation)
+              SizedBox(
                 height: getProportionateScreenHeight(320),
                 width: getProportionateScreenWidth(320),
+                child: Lottie.asset(
+                  "assets/lottie/Colors (fork).json",
+                  fit: BoxFit.contain,
+                ),
               ),
 
-              // Bottom content (button + admin login link)
+              // Bottom content
               Padding(
                 padding: EdgeInsets.only(bottom: getProportionateScreenHeight(20)),
                 child: Column(
@@ -72,7 +86,7 @@ class _BodyState extends State<Body> {
                         onPressed: () {
                           Navigator.push(
                             context,
-                            MaterialPageRoute(builder: (context) => UserTypeSelectionPage()),
+                            MaterialPageRoute(builder: (context) => const UserTypeSelectionPage()),
                           );
                         },
                         child: Text(
@@ -84,19 +98,17 @@ class _BodyState extends State<Body> {
                         ),
                       ),
                     ),
-
-                    // Admin Login Link
                     TextButton(
                       onPressed: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => AdminLoginPage()),
+                          MaterialPageRoute(builder: (context) => const AdminLoginPage()),
                         );
                       },
                       child: Text(
                         "Admin Login",
                         style: TextStyle(
-                          color: Colors.grey[700],
+                          color: Colors.grey[800],
                           decoration: TextDecoration.underline,
                           fontSize: getProportionateScreenWidth(14),
                         ),
