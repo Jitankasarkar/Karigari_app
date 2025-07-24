@@ -30,7 +30,7 @@ class _UserTypeSelectionPageState extends State<UserTypeSelectionPage> {
         height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color.fromARGB(255, 95, 18, 203), Color.fromARGB(255, 255, 219, 128)],
+            colors: [Color.fromARGB(255, 73, 47, 110), Color.fromARGB(255, 255, 219, 128)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),

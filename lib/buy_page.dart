@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:razorpay_flutter/razorpay_flutter.dart';
 import 'package:proto_app/confirm_page.dart';
 
 class BuyPage extends StatefulWidget {
@@ -9,295 +10,254 @@ class BuyPage extends StatefulWidget {
   final String productImage;
 
   const BuyPage({
-    super.key,
+    Key? key,
     required this.productName,
     required this.productPrice,
     required this.productImage,
-  });
+  }) : super(key: key);
 
   @override
   State<BuyPage> createState() => _BuyPageState();
 }
 
 class _BuyPageState extends State<BuyPage> {
-  String _selectedPayment = "cod";
+  final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _addressController = TextEditingController();
   final _phoneController = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
 
-  final int deliveryCharge = 50;
-  final int platformFee = 5;
+  String _selectedPayment = "cod";
+  late Razorpay _razorpay;
 
-  Future<void> _confirmOrder() async {
-    if (_formKey.currentState!.validate()) {
-      try {
-        final user = FirebaseAuth.instance.currentUser;
-        final userEmail = user?.email ?? 'Unknown';
+  final int deliveryCharge = 20;
+  final int platformFee = 1;
 
-        await FirebaseFirestore.instance.collection('orders').add({
-          'productName': widget.productName,
-          'productPrice': widget.productPrice,
-          'productImage': widget.productImage,
-          'fullName': _nameController.text,
-          'address': _addressController.text,
-          'phone': _phoneController.text,
-          'paymentMethod': _selectedPayment,
-          'email': userEmail,
-          'timestamp': FieldValue.serverTimestamp(),
-        });
+  @override
+  void initState() {
+    super.initState();
+    _razorpay = Razorpay();
+    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, _handlePaymentSuccess);
+    _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, _handlePaymentError);
+    _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, _handleExternalWallet);
+  }
 
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const ConfirmPage()),
-        );
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed to confirm order: $e")),
-        );
+  @override
+  void dispose() {
+    _razorpay.clear();
+    super.dispose();
+  }
+
+  void _handlePaymentSuccess(PaymentSuccessResponse response) {
+    _saveOrder(status: 'done', payId: response.paymentId);
+  }
+
+  void _handlePaymentError(PaymentFailureResponse response) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Payment failed: ${response.message}')),
+    );
+  }
+
+  void _handleExternalWallet(ExternalWalletResponse response) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('External wallet selected: ${response.walletName}')),
+    );
+  }
+
+  Future<void> _saveOrder({required String status, String? payId}) async {
+    final userEmail = FirebaseAuth.instance.currentUser?.email ?? "guest";
+
+    try {
+      await FirebaseFirestore.instance.collection('orders').add({
+        'productName': widget.productName,
+        'productPrice': widget.productPrice,
+        'productImage': widget.productImage,
+        'fullName': _nameController.text,
+        'address': _addressController.text,
+        'phone': _phoneController.text,
+        'paymentMethod': _selectedPayment,
+        'paymentStatus': status,
+        'paymentId': payId ?? '',
+        'email': userEmail,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const ConfirmPage()),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Order save failed: $e")),
+      );
+    }
+  }
+
+  void _startOnlinePayment(int amount) {
+    var options = {
+      'key': 'rzp_test_soO0DVUQSdQ81X',
+      'amount': amount * 100,
+      'name': widget.productName,
+      'description': 'Order Payment',
+      'prefill': {
+        'contact': _phoneController.text,
+        'email': FirebaseAuth.instance.currentUser?.email ?? '',
       }
+    };
+    _razorpay.open(options);
+  }
+
+  void _confirmOrder() {
+    if (!_formKey.currentState!.validate()) return;
+
+    final int price = int.tryParse(widget.productPrice) ?? 0;
+    final total = price + deliveryCharge + platformFee;
+
+    if (_selectedPayment == "cod") {
+      _saveOrder(status: "pending");
+    } else {
+      _startOnlinePayment(total);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final int productPrice = int.tryParse(widget.productPrice) ?? 0;
-    final int totalPrice = productPrice + deliveryCharge + platformFee;
+    final int price = int.tryParse(widget.productPrice) ?? 0;
+    final int total = price + deliveryCharge + platformFee;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F8F8),
       appBar: AppBar(
-        title: const Text("Checkout"),
-        backgroundColor: const Color.fromARGB(255, 214, 112, 22),
-        foregroundColor: Colors.white,
-      ),
+        title: const Text(
+          "Checkout",
+          style: const TextStyle(color: Colors.white),),
+        backgroundColor: const Color.fromARGB(255, 222, 128, 47)),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Product Card
               Card(
-                elevation: 3,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16)),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          widget.productImage,
-                          width: 100,
-                          height: 100,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              const Icon(Icons.broken_image, size: 100),
-                        ),
+                elevation: 4,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ClipRRect(
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+                      child: Image.network(widget.productImage,
+                          height: 200, width: double.infinity, fit: BoxFit.cover),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(widget.productName,
+                              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 4),
+                          Text("₹${widget.productPrice}",
+                              style: const TextStyle(fontSize: 18, color: Colors.green)),
+                        ],
                       ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.productName,
-                              style: const TextStyle(
-                                  fontSize: 18, fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text("Price:"),
-                                Text("₹$productPrice",
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text("Delivery Fee:"),
-                                const Text("₹50"),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text("Platform Fee:"),
-                                Text("₹$platformFee"),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            const Divider(),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text("Total:",
-                                    style: TextStyle(
-                                        fontWeight: FontWeight.bold)),
-                                Text("₹$totalPrice",
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.green)),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-
               const SizedBox(height: 20),
 
-              // Shipping Info
-              buildSectionCard(
-                title: "Shipping Info",
-                children: [
-                  buildInputField(
-                      controller: _nameController,
-                      label: "Full Name",
-                      icon: Icons.person),
-                  const SizedBox(height: 12),
-                  buildInputField(
-                      controller: _addressController,
-                      label: "Address",
-                      icon: Icons.home,
-                      maxLines: 3),
-                  const SizedBox(height: 12),
-                  buildInputField(
-                      controller: _phoneController,
-                      label: "Phone Number",
-                      icon: Icons.phone,
-                      keyboardType: TextInputType.phone),
-                ],
+              const Text("Shipping Details", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                    labelText: "Full Name", border: OutlineInputBorder()),
+                validator: (value) => value!.isEmpty ? "Enter your name" : null,
+              ),
+              const SizedBox(height: 12),
+
+              TextFormField(
+                controller: _addressController,
+                decoration: const InputDecoration(
+                    labelText: "Shipping Address", border: OutlineInputBorder()),
+                validator: (value) => value!.isEmpty ? "Enter your address" : null,
+              ),
+              const SizedBox(height: 12),
+
+              TextFormField(
+                controller: _phoneController,
+                decoration: const InputDecoration(
+                    labelText: "Phone Number", border: OutlineInputBorder()),
+                keyboardType: TextInputType.phone,
+                validator: (value) => value!.isEmpty ? "Enter your phone" : null,
               ),
 
               const SizedBox(height: 20),
-
-              // Payment Method
-              buildSectionCard(
-                title: "Select Payment",
-                children: [
-                  buildRadio("cod", "Cash on Delivery", Icons.money),
-                  buildRadio("upi", "UPI / Wallet", Icons.account_balance_wallet),
-                  buildRadio("card", "Credit / Debit Card", Icons.credit_card),
-                ],
+              const Text("Payment Method", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              RadioListTile(
+                title: const Text("Cash on Delivery (COD)"),
+                value: "cod",
+                groupValue: _selectedPayment,
+                onChanged: (value) => setState(() => _selectedPayment = value!),
               ),
+              RadioListTile(
+                title: const Text("Card/UPI (Razorpay)"),
+                value: "online",
+                groupValue: _selectedPayment,
+                onChanged: (value) => setState(() => _selectedPayment = value!),
+              ),
+             
 
-              const SizedBox(height: 100), // space for bottom button
+              const SizedBox(height: 20),
+              const Divider(thickness: 1),
+              const Text("Order Summary", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              _buildSummaryRow("Item Price", price),
+              _buildSummaryRow("Delivery Charge", deliveryCharge),
+              _buildSummaryRow("Platform Fee", platformFee),
+              const Divider(thickness: 1),
+              _buildSummaryRow("Total", total, isBold: true),
             ],
           ),
         ),
       ),
-      bottomNavigationBar: Container(
+      bottomNavigationBar: Padding(
         padding: const EdgeInsets.all(16),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          boxShadow: [BoxShadow(blurRadius: 8, color: Colors.black12)],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("Total Payable",
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                Text("₹$totalPrice",
-                    style: const TextStyle(
-                        fontSize: 18,
-                        color: Colors.green,
-                        fontWeight: FontWeight.bold)),
-              ],
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color.fromARGB(255, 222, 128, 47),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              textStyle: const TextStyle(fontSize: 16)),
+          onPressed: _confirmOrder,
+          child: Text(
+            "Pay ₹$total",
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold),
+              
             ),
-            const SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: _confirmOrder,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color.fromARGB(255, 214, 112, 22),
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Center(
-                child: Text("Confirm Order",
-                    style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white)),
-              ),
-            ),
-          ],
         ),
       ),
     );
   }
 
-  Widget buildSectionCard({required String title, required List<Widget> children}) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            ...children,
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget buildInputField({
-    required TextEditingController controller,
-    required String label,
-    required IconData icon,
-    TextInputType keyboardType = TextInputType.text,
-    int maxLines = 1,
-  }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: keyboardType,
-      maxLines: maxLines,
-      validator: (value) =>
-          value == null || value.isEmpty ? "Enter $label" : null,
-      decoration: InputDecoration(
-        labelText: label,
-        prefixIcon: Icon(icon),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        filled: true,
-        fillColor: Colors.grey.shade100,
-      ),
-    );
-  }
-
-  Widget buildRadio(String value, String title, IconData icon) {
-    return RadioListTile(
-      value: value,
-      groupValue: _selectedPayment,
-      onChanged: (val) => setState(() => _selectedPayment = val.toString()),
-      title: Row(
+  Widget _buildSummaryRow(String label, int amount, {bool isBold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Icon(icon, color: const Color.fromARGB(255, 188, 116, 27)),
-          const SizedBox(width: 10),
-          Text(title),
+          Text(label,
+              style: TextStyle(
+                fontSize: 16, 
+                fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+                )),
+          Text("₹$amount",
+              style: TextStyle(fontSize: 16,
+              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,)),
         ],
       ),
-      activeColor: const Color.fromARGB(255, 214, 112, 22),
     );
   }
 }

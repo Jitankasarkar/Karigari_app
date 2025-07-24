@@ -20,45 +20,66 @@ class _BuyerSignUpScreenState extends State<BuyerSignUpScreen> {
     final password = _passwordController.text.trim();
     final name = _nameController.text.trim();
 
-    // Email format validation using regex
     final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+
     if (!emailRegex.hasMatch(email)) {
       _showDialog("Invalid email format. Please enter a valid email.");
       return;
     }
 
-    // Optional: Validate empty fields
     if (name.isEmpty || email.isEmpty || password.isEmpty) {
       _showDialog("Please fill in all the fields.");
       return;
     }
 
-    // Optional: Password strength check
     if (password.length < 6) {
       _showDialog("Password must be at least 6 characters long.");
       return;
     }
 
     try {
+      // 1. Create user in Firebase Auth
       final UserCredential userCredential =
           await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      User? user = userCredential.user;
+      // 2. Save user data to Firestore
+      final user = userCredential.user;
       if (user != null) {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        final userDoc = FirebaseFirestore.instance.collection('users').doc(user.uid);
+
+        await userDoc.set({
           'uid': user.uid,
-          'email': user.email,
+          'email': email,
           'name': name,
           'createdAt': Timestamp.now(),
         });
-      }
 
-      _showDialog("Signup successful. Please login now.", isSuccess: true);
+        _showDialog("Signup successful. Please login now.", isSuccess: true);
+      } else {
+        _showDialog("Unexpected error: user is null.");
+      }
+    } on FirebaseAuthException catch (e) {
+      String errorMessage;
+      switch (e.code) {
+        case 'email-already-in-use':
+          errorMessage = 'This email is already in use.';
+          break;
+        case 'invalid-email':
+          errorMessage = 'The email address is not valid.';
+          break;
+        case 'weak-password':
+          errorMessage = 'Password is too weak.';
+          break;
+        default:
+          errorMessage = 'Signup failed: ${e.message}';
+      }
+      _showDialog(errorMessage);
     } catch (e) {
-      _showDialog(e.toString());
+      // Safe fallback in case any other error (e.g., plugin issue)
+      _showDialog("Unexpected error occurred during signup.\n${e.runtimeType}: ${e.toString()}");
     }
   }
 
@@ -87,9 +108,18 @@ class _BuyerSignUpScreenState extends State<BuyerSignUpScreen> {
   }
 
   @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // 🔁 Your original full UI remains unchanged
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F6F2),
+      backgroundColor: const Color.fromARGB(251, 219, 218, 216),
       body: Stack(
         children: [
           SafeArea(
@@ -122,8 +152,6 @@ class _BuyerSignUpScreenState extends State<BuyerSignUpScreen> {
                       ),
                     ),
                     const SizedBox(height: 30),
-
-                    // Full Name
                     TextField(
                       controller: _nameController,
                       decoration: InputDecoration(
@@ -138,8 +166,6 @@ class _BuyerSignUpScreenState extends State<BuyerSignUpScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-
-                    // Email
                     TextField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
@@ -155,8 +181,6 @@ class _BuyerSignUpScreenState extends State<BuyerSignUpScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-
-                    // Password
                     TextField(
                       controller: _passwordController,
                       obscureText: true,
@@ -172,8 +196,6 @@ class _BuyerSignUpScreenState extends State<BuyerSignUpScreen> {
                       ),
                     ),
                     const SizedBox(height: 30),
-
-                    // Sign Up Button
                     ElevatedButton(
                       onPressed: _signup,
                       style: ElevatedButton.styleFrom(
@@ -191,8 +213,6 @@ class _BuyerSignUpScreenState extends State<BuyerSignUpScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-
-                    // Login Link
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -220,8 +240,6 @@ class _BuyerSignUpScreenState extends State<BuyerSignUpScreen> {
               ),
             ),
           ),
-
-          // Back Button
           Positioned(
             top: 12,
             left: 12,

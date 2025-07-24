@@ -60,7 +60,7 @@ class _ProductDetailPageState extends State<ProductDetailPage> {
           product["title"] ?? "",
           style: const TextStyle(color: Colors.white),
         ),
-        backgroundColor: const Color.fromARGB(255, 222, 128, 47),
+        backgroundColor: const Color.fromARGB(255, 214, 112, 22),
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
