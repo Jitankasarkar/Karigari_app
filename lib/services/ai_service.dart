@@ -1,4 +1,3 @@
-
 import 'dart:convert';
 
 import 'package:firebase_ai/firebase_ai.dart';
@@ -34,17 +33,36 @@ class AIService {
 You are an AI catalog assistant for Karigari, a marketplace
 for local artisans and handmade products.
 
-Analyze the following product.
+Your job is to understand a product and create structured,
+accurate metadata that can later be used by:
 
-PRODUCT TITLE:
+- Product search
+- Filters
+- Recommendations
+- AI shopping assistant
+- Natural language product discovery
+
+IMPORTANT:
+Only use information that can reasonably be determined from
+the product title and description.
+
+Do NOT invent facts.
+
+------------------------------------------------------------
+PRODUCT TITLE
+------------------------------------------------------------
+
 $title
 
-PRODUCT DESCRIPTION:
+------------------------------------------------------------
+PRODUCT DESCRIPTION
+------------------------------------------------------------
+
 $description
 
-Generate structured catalog information that can be used for
-product search, filtering, recommendations, and future AI-powered
-shopping.
+------------------------------------------------------------
+RETURN FORMAT
+------------------------------------------------------------
 
 Return ONLY valid JSON.
 
@@ -53,46 +71,302 @@ Use exactly this structure:
 {
   "category": "",
   "subcategory": "",
+  "productType": "",
+  "material": [],
+  "colour": [],
+  "style": [],
+  "occasion": [],
+  "useCases": [],
   "tags": [],
   "keywords": [],
   "shortDescription": "",
   "searchTerms": []
 }
 
-Rules:
+------------------------------------------------------------
+FIELD RULES
+------------------------------------------------------------
 
-1. category:
-   Use a broad product category such as:
-   "Home & Kitchen", "Clothing", "Jewellery",
-   "Home Decor", "Handicrafts", etc.
+1. category
 
-2. subcategory:
-   Make it more specific to the actual product.
+Choose ONE broad category.
 
-3. tags:
-   Include useful attributes and characteristics.
-   Examples:
-   "handmade", "wooden", "eco-friendly", "traditional",
-   "kitchen", "lightweight".
+Examples:
 
-4. keywords:
-   Include individual words or short phrases that buyers
-   might use when searching for this product.
+"Home & Kitchen"
+"Clothing"
+"Jewellery"
+"Home Decor"
+"Handicrafts"
+"Accessories"
+"Bags"
+"Footwear"
+"Art"
+"Gifts"
 
-5. shortDescription:
-   Write a concise, attractive description for a buyer.
-   Keep it under 40 words.
+Choose the category that best represents the actual product.
 
-6. searchTerms:
-   Include natural phrases that a customer might type
-   into a search box.
+------------------------------------------------------------
 
-7. Do not invent specific facts that are not present in the
-   title or description.
+2. subcategory
 
-8. Do not include markdown.
+Choose a more specific category.
 
-9. Return JSON only.
+Examples:
+
+"Table Cloth"
+"Bangles"
+"Wall Hanging"
+"Wooden Utensils"
+"Handwoven Saree"
+"Pottery"
+"Handmade Bag"
+
+The subcategory should describe the actual product,
+not merely its material.
+
+------------------------------------------------------------
+
+3. productType
+
+Identify the actual item being sold.
+
+Examples:
+
+"Table Cloth"
+"Bangles"
+"Wall Hanging"
+"Kitchen Utensils"
+"Saree"
+"Handbag"
+
+This field is extremely important for AI-powered shopping.
+
+Keep it concise.
+
+------------------------------------------------------------
+
+4. material
+
+List the materials explicitly mentioned or clearly stated
+in the title or description.
+
+Examples:
+
+["cotton"]
+["wood"]
+["silk", "thread"]
+["clay"]
+["terracotta"]
+
+If the material is unknown, return:
+
+[]
+
+Do not guess the material.
+
+------------------------------------------------------------
+
+5. colour
+
+List colours explicitly mentioned in the title or description.
+
+Examples:
+
+["red"]
+["blue", "gold"]
+["green"]
+
+If colour is not known, return:
+
+[]
+
+Do not guess colours from assumptions.
+
+------------------------------------------------------------
+
+6. style
+
+Describe the visual or cultural style only when supported
+by the product information.
+
+Examples:
+
+["traditional"]
+["minimalist"]
+["rustic"]
+["ethnic"]
+["modern"]
+["handwoven"]
+
+If no style can reasonably be determined, return:
+
+[]
+
+Do not invent a style.
+
+------------------------------------------------------------
+
+7. occasion
+
+List occasions for which the product is explicitly intended
+or strongly indicated by the description.
+
+Examples:
+
+["wedding"]
+["birthday"]
+["festival"]
+["housewarming"]
+["daily use"]
+
+If there is no clear occasion, return:
+
+[]
+
+Do not invent occasions.
+
+------------------------------------------------------------
+
+8. useCases
+
+Describe practical situations where the product can be used.
+
+Examples:
+
+["dining table"]
+["kitchen"]
+["home decoration"]
+["gift"]
+["daily wear"]
+
+Only include use cases supported by the product information.
+
+------------------------------------------------------------
+
+9. tags
+
+Generate useful descriptive tags.
+
+Examples:
+
+"handmade"
+"handwoven"
+"traditional"
+"eco-friendly"
+"wooden"
+"lightweight"
+"decorative"
+"artisan-made"
+
+Tags should describe genuine characteristics of the product.
+
+Do not create unrelated tags.
+
+------------------------------------------------------------
+
+10. keywords
+
+Generate words and short phrases that a customer might use
+when searching for this product.
+
+For example, for a handmade cotton table cloth:
+
+[
+  "table cloth",
+  "table cover",
+  "cotton table cloth",
+  "handmade table cloth",
+  "dining table cloth"
+]
+
+Include both common product names and useful variations.
+
+Do not add unrelated products.
+
+------------------------------------------------------------
+
+11. shortDescription
+
+Write a concise, attractive description for a buyer.
+
+Maximum 40 words.
+
+Do not add facts that are not present in the original
+product information.
+
+------------------------------------------------------------
+
+12. searchTerms
+
+Generate natural phrases a customer might type when looking
+for this exact type of product.
+
+For example:
+
+[
+  "handmade table cloth",
+  "cotton table cloth",
+  "traditional table cloth",
+  "table cover for dining table"
+]
+
+Search terms should represent the actual product.
+
+Do not include unrelated products.
+
+------------------------------------------------------------
+IMPORTANT SEARCH RULE
+------------------------------------------------------------
+
+The metadata will be used by an AI shopping assistant.
+
+Therefore, product identity is more important than generic
+similarity.
+
+For example:
+
+If the product is a table cloth:
+
+GOOD:
+"table cloth"
+"table cover"
+"dining table cloth"
+"handmade table cloth"
+
+BAD:
+"bangles"
+"jewellery"
+"kitchen utensils"
+
+Do NOT add related but different products.
+
+------------------------------------------------------------
+IMPORTANT ACCURACY RULE
+------------------------------------------------------------
+
+If something is not present or cannot reasonably be determined
+from the title and description, use:
+
+[]
+or
+
+""
+
+Do not hallucinate information.
+
+------------------------------------------------------------
+OUTPUT RULES
+------------------------------------------------------------
+
+1. Return JSON only.
+2. Do not use markdown.
+3. Do not add explanations.
+4. Do not add comments.
+5. Use exactly the requested field names.
+6. Keep lists concise and relevant.
+7. Avoid duplicate values.
+8. Do not include unrelated products.
 ''';
 
     try {
@@ -117,7 +391,7 @@ Rules:
       }
 
       print('========================================');
-      print('GEMINI RESPONSE');
+      print('GEMINI CATALOG RESPONSE');
       print(responseText);
       print('========================================');
 
@@ -125,39 +399,9 @@ Rules:
       // CLEAN GEMINI RESPONSE
       // =======================================================
 
-      String cleanJson = responseText;
-
-      // Remove ```json ... ```
-      if (cleanJson.startsWith('```json')) {
-        cleanJson = cleanJson
-            .replaceFirst('```json', '')
-            .trim();
-
-        if (cleanJson.endsWith('```')) {
-          cleanJson = cleanJson
-              .substring(
-                0,
-                cleanJson.length - 3,
-              )
-              .trim();
-        }
-      }
-
-      // Remove ``` ... ```
-      else if (cleanJson.startsWith('```')) {
-        cleanJson = cleanJson
-            .replaceFirst('```', '')
-            .trim();
-
-        if (cleanJson.endsWith('```')) {
-          cleanJson = cleanJson
-              .substring(
-                0,
-                cleanJson.length - 3,
-              )
-              .trim();
-        }
-      }
+      final cleanJson = _cleanJsonResponse(
+        responseText,
+      );
 
       // =======================================================
       // PARSE JSON
@@ -165,7 +409,7 @@ Rules:
 
       final decoded = jsonDecode(cleanJson);
 
-      if (decoded is! Map<String, dynamic>) {
+      if (decoded is! Map) {
         throw Exception(
           'Gemini returned an invalid catalog format.',
         );
@@ -176,23 +420,66 @@ Rules:
       // =======================================================
 
       final category =
-          decoded['category']?.toString().trim() ?? '';
+          decoded['category']
+              ?.toString()
+              .trim() ??
+          '';
 
       final subcategory =
-          decoded['subcategory']?.toString().trim() ?? '';
+          decoded['subcategory']
+              ?.toString()
+              .trim() ??
+          '';
+
+      final productType =
+          decoded['productType']
+              ?.toString()
+              .trim() ??
+          '';
 
       final shortDescription =
-          decoded['shortDescription']?.toString().trim() ?? '';
+          decoded['shortDescription']
+              ?.toString()
+              .trim() ??
+          '';
 
-      final tags = _convertToStringList(
+      final material =
+          _convertToStringList(
+        decoded['material'],
+      );
+
+      final colour =
+          _convertToStringList(
+        decoded['colour'],
+      );
+
+      final style =
+          _convertToStringList(
+        decoded['style'],
+      );
+
+      final occasion =
+          _convertToStringList(
+        decoded['occasion'],
+      );
+
+      final useCases =
+          _convertToStringList(
+        decoded['useCases'],
+      );
+
+      final tags =
+          _convertToStringList(
         decoded['tags'],
       );
 
-      final keywords = _convertToStringList(
+      final keywords =
+          _convertToStringList(
         decoded['keywords'],
       );
 
-      final searchTerms = _convertToStringList(
+      final searchTerms =
+          _convertToStringList(
         decoded['searchTerms'],
       );
 
@@ -203,9 +490,20 @@ Rules:
       return {
         'category': category,
         'subcategory': subcategory,
+        'productType': productType,
+
+        'material': material,
+        'colour': colour,
+        'style': style,
+        'occasion': occasion,
+        'useCases': useCases,
+
         'tags': tags,
         'keywords': keywords,
-        'shortDescription': shortDescription,
+
+        'shortDescription':
+            shortDescription,
+
         'searchTerms': searchTerms,
       };
     } catch (e, stackTrace) {
@@ -230,6 +528,67 @@ Rules:
   }
 
   // =========================================================
+  // CLEAN JSON RESPONSE
+  // =========================================================
+
+  static String _cleanJsonResponse(
+    String responseText,
+  ) {
+    String cleanJson =
+        responseText.trim();
+
+    // ---------------------------------------------------------
+    // Remove ```json
+    // ---------------------------------------------------------
+
+    if (cleanJson.startsWith(
+      '```json',
+    )) {
+      cleanJson = cleanJson
+          .replaceFirst(
+            '```json',
+            '',
+          )
+          .trim();
+
+      if (cleanJson.endsWith(
+        '```',
+      )) {
+        cleanJson = cleanJson.substring(
+          0,
+          cleanJson.length - 3,
+        ).trim();
+      }
+    }
+
+    // ---------------------------------------------------------
+    // Remove generic ```
+    // ---------------------------------------------------------
+
+    else if (cleanJson.startsWith(
+      '```',
+    )) {
+      cleanJson = cleanJson
+          .replaceFirst(
+            '```',
+            '',
+          )
+          .trim();
+
+      if (cleanJson.endsWith(
+        '```',
+      )) {
+        cleanJson = cleanJson.substring(
+          0,
+          cleanJson.length - 3,
+        ).trim();
+      }
+    }
+
+    return cleanJson.trim();
+  }
+
+  // =========================================================
   // CONVERT AI VALUE TO STRING LIST
   // =========================================================
 
@@ -240,13 +599,25 @@ Rules:
       return <String>[];
     }
 
-    return value
-        .map(
-          (item) => item.toString().trim(),
-        )
-        .where(
-          (item) => item.isNotEmpty,
-        )
-        .toList();
+    final result = <String>[];
+
+    for (final item in value) {
+      final text =
+          item.toString().trim();
+
+      if (text.isEmpty) {
+        continue;
+      }
+
+      // -------------------------------------------------------
+      // Avoid duplicate values
+      // -------------------------------------------------------
+
+      if (!result.contains(text)) {
+        result.add(text);
+      }
+    }
+
+    return result;
   }
 }

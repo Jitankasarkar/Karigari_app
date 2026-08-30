@@ -9,9 +9,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image/image.dart' as img;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-//import 'package:ai_service.dart';
-//import 'package:/services/ai_service.dart';
 import '../services/ai_service.dart';
+
 class SellerUploadProductPage extends StatefulWidget {
   const SellerUploadProductPage({super.key});
 
@@ -74,15 +73,6 @@ class _SellerUploadProductPageState
 
   final String uploadPreset =
       dotenv.env['CLOUDINARY_UPLOAD_PRESET']!;
-
-  // =========================================================
-  // INIT STATE
-  // =========================================================
-
-  @override
-  void initState() {
-    super.initState();
-  }
 
   // =========================================================
   // PICK IMAGE
@@ -229,11 +219,6 @@ class _SellerUploadProductPageState
   // =========================================================
   // PROCESS PRODUCT WITH AI
   // =========================================================
-  //
-  // Gemini logic is NOT written here anymore.
-  //
-  // This page simply calls AIService.
-  // =========================================================
 
   Future<void> _processProductWithAI(
     String productId, {
@@ -253,6 +238,15 @@ class _SellerUploadProductPageState
       );
 
       // -------------------------------------------------------
+      // DEBUG
+      // -------------------------------------------------------
+
+      debugPrint('========================================');
+      debugPrint('AI CATALOG DATA');
+      debugPrint(aiData.toString());
+      debugPrint('========================================');
+
+      // -------------------------------------------------------
       // SAVE AI DATA TO FIRESTORE
       // -------------------------------------------------------
 
@@ -260,11 +254,42 @@ class _SellerUploadProductPageState
           .collection('products')
           .doc(productId)
           .update({
+
+        // -----------------------------------------------------
+        // PRODUCT CLASSIFICATION
+        // -----------------------------------------------------
+
         'category':
             aiData['category'] ?? '',
 
         'subcategory':
             aiData['subcategory'] ?? '',
+
+        'productType':
+            aiData['productType'] ?? '',
+
+        // -----------------------------------------------------
+        // PRODUCT ATTRIBUTES
+        // -----------------------------------------------------
+
+        'material':
+            aiData['material'] ?? [],
+
+        'colour':
+            aiData['colour'] ?? [],
+
+        'style':
+            aiData['style'] ?? [],
+
+        'occasion':
+            aiData['occasion'] ?? [],
+
+        'useCases':
+            aiData['useCases'] ?? [],
+
+        // -----------------------------------------------------
+        // SEARCH DATA
+        // -----------------------------------------------------
 
         'tags':
             aiData['tags'] ?? [],
@@ -272,11 +297,19 @@ class _SellerUploadProductPageState
         'keywords':
             aiData['keywords'] ?? [],
 
+        'searchTerms':
+            aiData['searchTerms'] ?? [],
+
+        // -----------------------------------------------------
+        // AI GENERATED DESCRIPTION
+        // -----------------------------------------------------
+
         'shortDescription':
             aiData['shortDescription'] ?? '',
 
-        'searchTerms':
-            aiData['searchTerms'] ?? [],
+        // -----------------------------------------------------
+        // AI STATUS
+        // -----------------------------------------------------
 
         'aiProcessed':
             true,
@@ -292,7 +325,8 @@ class _SellerUploadProductPageState
         "AI catalog data saved for product: $productId",
       );
 
-    } catch (e) {
+    } catch (e, stackTrace) {
+
       // -------------------------------------------------------
       // AI FAILED
       //
@@ -301,6 +335,10 @@ class _SellerUploadProductPageState
 
       debugPrint(
         "AI processing failed: $e",
+      );
+
+      debugPrint(
+        "AI processing stack trace: $stackTrace",
       );
 
       try {
@@ -485,13 +523,9 @@ class _SellerUploadProductPageState
             sellerCategory,
 
         // ---------------------------------------------------
-        // AI-READY PRODUCT INFORMATION
-        // ---------------------------------------------------
+        // AI PRODUCT INFORMATION
         //
-        // These fields are initially empty.
-        //
-        // AIService will populate them after the
-        // product is created.
+        // These fields will be populated by AIService.
         // ---------------------------------------------------
 
         'category':
@@ -499,6 +533,24 @@ class _SellerUploadProductPageState
 
         'subcategory':
             '',
+
+        'productType':
+            '',
+
+        'material':
+            [],
+
+        'colour':
+            [],
+
+        'style':
+            [],
+
+        'occasion':
+            [],
+
+        'useCases':
+            [],
 
         'tags':
             [],
@@ -511,6 +563,10 @@ class _SellerUploadProductPageState
 
         'searchTerms':
             [],
+
+        // ---------------------------------------------------
+        // AI STATUS
+        // ---------------------------------------------------
 
         'aiProcessed':
             false,
@@ -540,14 +596,6 @@ class _SellerUploadProductPageState
 
       // =====================================================
       // 7. PROCESS PRODUCT WITH AI
-      // =====================================================
-      //
-      // The product is already saved successfully.
-      //
-      // Now AIService sends the title and description
-      // to Gemini and returns structured catalog data.
-      //
-      // If Gemini fails, the product remains published.
       // =====================================================
 
       await _processProductWithAI(
