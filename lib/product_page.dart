@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:proto_app/buy_page.dart';
 import 'package:proto_app/product_detail_page.dart';
+import 'package:proto_app/add_to_cart_page.dart';
 import 'package:proto_app/widgets/ai_assistant.dart';
 
 class ProductPage extends StatefulWidget {
@@ -33,6 +34,16 @@ class _ProductPageState extends State<ProductPage> {
   static const Color darkOrange =
       Color.fromARGB(255, 141, 83, 20);
 
+  static const Color cardBackground =
+      Color.fromARGB(255, 249, 243, 251);
+
+  // =========================================================
+  // FIRESTORE
+  // =========================================================
+
+  final FirebaseFirestore _firestore =
+      FirebaseFirestore.instance;
+
   // =========================================================
   // DISPOSE
   // =========================================================
@@ -41,6 +52,32 @@ class _ProductPageState extends State<ProductPage> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  // =========================================================
+  // CURRENT USER
+  // =========================================================
+
+  String? get _userId {
+    return FirebaseAuth.instance.currentUser?.uid;
+  }
+
+  // =========================================================
+  // CART REFERENCE
+  // =========================================================
+
+  CollectionReference<Map<String, dynamic>>?
+      get _cartReference {
+    final uid = _userId;
+
+    if (uid == null || uid.isEmpty) {
+      return null;
+    }
+
+    return _firestore
+        .collection('users')
+        .doc(uid)
+        .collection('cart');
   }
 
   // =========================================================
@@ -55,11 +92,216 @@ class _ProductPageState extends State<ProductPage> {
       barrierColor: Colors.black.withOpacity(0.25),
       enableDrag: true,
       builder: (assistantContext) {
-        return AIAssistant(
-          
-        );
+        return const AIAssistant();
       },
     );
+  }
+
+  // =========================================================
+  // OPEN CART
+  // =========================================================
+
+  void _openCart() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const AddToCartPage(),
+      ),
+    );
+  }
+
+  // =========================================================
+  // ADD PRODUCT TO CART
+  // =========================================================
+
+  Future<void> _addToCart(
+    String productId,
+    Map<String, dynamic> product,
+  ) async {
+    final cart = _cartReference;
+
+    if (cart == null) {
+      _showMessage(
+        "Please log in to add items to cart.",
+      );
+      return;
+    }
+
+    final cartItem = cart.doc(productId);
+
+    try {
+      final existing = await cartItem.get();
+
+      if (existing.exists) {
+        final currentQuantity =
+            _toInt(existing.data()?['quantity']);
+
+        await cartItem.update({
+          'quantity': currentQuantity + 1,
+          'updatedAt':
+              FieldValue.serverTimestamp(),
+        });
+      } else {
+        final sellerName =
+            (product['sellerName'] ?? '')
+                .toString()
+                .trim();
+
+        await cartItem.set({
+          'productId': productId,
+
+          'title':
+              (product['title'] ?? '').toString(),
+
+          'description':
+              (product['description'] ?? '')
+                  .toString(),
+
+          'price':
+              (product['price'] ?? '0').toString(),
+
+          'imageUrl':
+              (product['imageUrl'] ?? '')
+                  .toString(),
+
+          'sellerId':
+              (product['sellerId'] ?? '')
+                  .toString(),
+
+          'sellerName':
+              sellerName.isNotEmpty
+                  ? sellerName
+                  : 'Local Artisan',
+
+          'quantity': 1,
+
+          'addedAt':
+              FieldValue.serverTimestamp(),
+
+          'updatedAt':
+              FieldValue.serverTimestamp(),
+        });
+      }
+
+      _showMessage("Added to cart");
+    } catch (e) {
+      _showMessage(
+        "Could not add to cart: $e",
+      );
+    }
+  }
+
+  // =========================================================
+  // CHANGE CART QUANTITY
+  // =========================================================
+
+  Future<void> _changeQuantity(
+    String productId,
+    int change,
+  ) async {
+    final cart = _cartReference;
+
+    if (cart == null) return;
+
+    final cartItem = cart.doc(productId);
+
+    try {
+      final snapshot = await cartItem.get();
+
+      if (!snapshot.exists) {
+        return;
+      }
+
+      final data = snapshot.data() ?? {};
+
+      final currentQuantity =
+          _toInt(data['quantity']);
+
+      final newQuantity =
+          currentQuantity + change;
+
+      if (newQuantity <= 0) {
+        await cartItem.delete();
+        return;
+      }
+
+      await cartItem.update({
+        'quantity': newQuantity,
+        'updatedAt':
+            FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      _showMessage(
+        "Could not update cart: $e",
+      );
+    }
+  }
+
+  // =========================================================
+  // PRODUCT QUANTITY STREAM
+  // =========================================================
+
+  Stream<int> _productQuantityStream(
+    String productId,
+  ) {
+    final cart = _cartReference;
+
+    if (cart == null) {
+      return Stream.value(0);
+    }
+
+    return cart
+        .doc(productId)
+        .snapshots()
+        .map((snapshot) {
+      if (!snapshot.exists) {
+        return 0;
+      }
+
+      final data = snapshot.data();
+
+      return _toInt(
+        data?['quantity'],
+      );
+    });
+  }
+
+  // =========================================================
+  // SAFE INTEGER CONVERSION
+  // =========================================================
+
+  int _toInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(
+          value?.toString() ?? '',
+        ) ??
+        0;
+  }
+
+  // =========================================================
+  // SHOW MESSAGE
+  // =========================================================
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          duration:
+              const Duration(seconds: 2),
+        ),
+      );
   }
 
   // =========================================================
@@ -67,13 +309,15 @@ class _ProductPageState extends State<ProductPage> {
   // =========================================================
 
   void _openProductDetails(
+    String productId,
     Map<String, dynamic> product,
   ) {
     final productTitle =
         (product["title"] ?? "").toString();
 
     final productDescription =
-        (product["description"] ?? "").toString();
+        (product["description"] ?? "")
+            .toString();
 
     final productPrice =
         (product["price"] ?? "0").toString();
@@ -83,31 +327,26 @@ class _ProductPageState extends State<ProductPage> {
 
     final sellerName =
         (product["sellerName"] ?? "")
-                .toString()
-                .trim()
-                .isNotEmpty
-            ? product["sellerName"]
-                .toString()
-                .trim()
-            : "Local Artisan";
+            .toString()
+            .trim();
 
     final sellerId =
         (product["sellerId"] ?? "").toString();
 
-    Navigator.push(
+    ProductDetailPage.open(
       context,
-      MaterialPageRoute(
-        builder: (_) => ProductDetailPage(
-          product: {
-            "title": productTitle,
-            "description": productDescription,
-            "price": productPrice,
-            "imageUrl": productImage,
-            "sellerName": sellerName,
-            "sellerId": sellerId,
-          },
-        ),
-      ),
+      {
+        "productId": productId,
+        "title": productTitle,
+        "description": productDescription,
+        "price": productPrice,
+        "imageUrl": productImage,
+        "sellerName":
+            sellerName.isNotEmpty
+                ? sellerName
+                : "Local Artisan",
+        "sellerId": sellerId,
+      },
     );
   }
 
@@ -116,6 +355,7 @@ class _ProductPageState extends State<ProductPage> {
   // =========================================================
 
   void _openBuyPage(
+    String productId,
     Map<String, dynamic> product,
   ) {
     final productTitle =
@@ -129,13 +369,8 @@ class _ProductPageState extends State<ProductPage> {
 
     final sellerName =
         (product["sellerName"] ?? "")
-                .toString()
-                .trim()
-                .isNotEmpty
-            ? product["sellerName"]
-                .toString()
-                .trim()
-            : "Local Artisan";
+            .toString()
+            .trim();
 
     final sellerId =
         (product["sellerId"] ?? "").toString();
@@ -144,10 +379,14 @@ class _ProductPageState extends State<ProductPage> {
       context,
       MaterialPageRoute(
         builder: (_) => BuyPage(
+          productId: productId,
           productName: productTitle,
           productPrice: productPrice,
           productImage: productImage,
-          sellerName: sellerName,
+          sellerName:
+              sellerName.isNotEmpty
+                  ? sellerName
+                  : "Local Artisan",
           sellerId: sellerId,
         ),
       ),
@@ -176,10 +415,14 @@ class _ProductPageState extends State<ProductPage> {
 
   @override
   Widget build(BuildContext context) {
+    final cart = _cartReference;
+
     return Scaffold(
-      // =====================================================
+      backgroundColor: Colors.white,
+
+      // =======================================================
       // APP BAR
-      // =====================================================
+      // =======================================================
 
       appBar: AppBar(
         automaticallyImplyLeading: false,
@@ -189,78 +432,292 @@ class _ProductPageState extends State<ProductPage> {
           style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.w600,
+            fontSize: 20,
           ),
         ),
 
-        backgroundColor: primaryOrange,
+        backgroundColor:
+            primaryOrange,
 
         elevation: 0,
 
+        iconTheme:
+            const IconThemeData(
+          color: Colors.white,
+        ),
+
         actions: [
+          // ---------------------------------------------------
+          // CART
+          // ---------------------------------------------------
+
+          if (cart != null)
+            StreamBuilder<
+                QuerySnapshot<
+                    Map<String, dynamic>>>(
+              stream: cart.snapshots(),
+
+              builder:
+                  (context, snapshot) {
+                int totalQuantity = 0;
+
+                if (snapshot.hasData) {
+                  for (final doc
+                      in snapshot.data!.docs) {
+                    totalQuantity += _toInt(
+                      doc.data()['quantity'],
+                    );
+                  }
+                }
+
+                return Stack(
+                  clipBehavior:
+                      Clip.none,
+
+                  children: [
+                    IconButton(
+                      icon:
+                          const Icon(
+                        Icons
+                            .shopping_cart_outlined,
+                        color:
+                            Colors.white,
+                        size: 29,
+                      ),
+
+                      tooltip: 'Cart',
+
+                      onPressed:
+                          _openCart,
+                    ),
+
+                    if (totalQuantity > 0)
+                      Positioned(
+                        right: 2,
+                        top: 2,
+
+                        child:
+                            Container(
+                          constraints:
+                              const BoxConstraints(
+                            minWidth: 18,
+                            minHeight: 18,
+                          ),
+
+                          padding:
+                              const EdgeInsets
+                                  .symmetric(
+                            horizontal: 4,
+                          ),
+
+                          decoration:
+                              BoxDecoration(
+                            color:
+                                Colors.red,
+
+                            borderRadius:
+                                BorderRadius
+                                    .circular(
+                              10,
+                            ),
+
+                            border:
+                                Border.all(
+                              color:
+                                  primaryOrange,
+                              width: 1.5,
+                            ),
+                          ),
+
+                          child:
+                              Text(
+                            totalQuantity >
+                                    99
+                                ? '99+'
+                                : totalQuantity
+                                    .toString(),
+
+                            textAlign:
+                                TextAlign
+                                    .center,
+
+                            style:
+                                const TextStyle(
+                              color:
+                                  Colors.white,
+                              fontSize:
+                                  10,
+                              fontWeight:
+                                  FontWeight
+                                      .bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            )
+          else
+            IconButton(
+              icon:
+                  const Icon(
+                Icons
+                    .shopping_cart_outlined,
+                color: Colors.white,
+                size: 29,
+              ),
+              onPressed: _openCart,
+            ),
+
+          // ---------------------------------------------------
+          // LOGOUT
+          // ---------------------------------------------------
+
           IconButton(
-            icon: const Icon(
+            icon:
+                const Icon(
               Icons.logout,
               color: Colors.white,
+              size: 27,
             ),
 
             tooltip: 'Log Out',
 
             onPressed: _logout,
           ),
+
+          const SizedBox(
+            width: 4,
+          ),
         ],
       ),
 
-      // =====================================================
+      // =======================================================
       // BODY
-      // =====================================================
+      // =======================================================
 
-      body: Padding(
-        padding: const EdgeInsets.all(10),
+      body: Column(
+        children: [
+          // ===================================================
+          // SEARCH BAR
+          // ===================================================
 
-        child: Column(
-          children: [
-            // =================================================
-            // SEARCH BAR
-            // =================================================
+          Padding(
+            padding:
+                const EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              10,
+            ),
 
-            TextField(
-              controller: _searchController,
+            child: TextField(
+              controller:
+                  _searchController,
 
               onChanged: (value) {
                 setState(() {
                   _searchQuery =
-                      value.toLowerCase().trim();
+                      value
+                          .toLowerCase()
+                          .trim();
                 });
               },
 
-              decoration: InputDecoration(
+              decoration:
+                  InputDecoration(
                 hintText:
                     'Search products...',
 
+                hintStyle:
+                    TextStyle(
+                  color:
+                      Colors.grey.shade600,
+                  fontSize: 17,
+                ),
+
                 prefixIcon:
-                    const Icon(Icons.search),
+                    const Icon(
+                  Icons.search,
+                  size: 30,
+                ),
 
                 suffixIcon:
-                    _searchQuery.isNotEmpty
+                    _searchQuery
+                            .isNotEmpty
                         ? IconButton(
-                            icon: const Icon(
+                            icon:
+                                const Icon(
                               Icons.clear,
                             ),
 
-                            onPressed: () {
-                              _searchController.clear();
+                            onPressed:
+                                () {
+                              _searchController
+                                  .clear();
 
                               setState(() {
-                                _searchQuery = '';
+                                _searchQuery =
+                                    '';
                               });
                             },
                           )
                         : null,
 
+                contentPadding:
+                    const EdgeInsets
+                        .symmetric(
+                  vertical: 17,
+                  horizontal: 10,
+                ),
+
                 border:
                     OutlineInputBorder(
                   borderRadius:
-                      BorderRadius.circular(12),
+                      BorderRadius
+                          .circular(
+                    18,
+                  ),
+
+                  borderSide:
+                      BorderSide(
+                    color:
+                        Colors.grey.shade700,
+                    width: 1.3,
+                  ),
+                ),
+
+                enabledBorder:
+                    OutlineInputBorder(
+                  borderRadius:
+                      BorderRadius
+                          .circular(
+                    18,
+                  ),
+
+                  borderSide:
+                      BorderSide(
+                    color:
+                        Colors.grey.shade700,
+                    width: 1.3,
+                  ),
+                ),
+
+                focusedBorder:
+                    OutlineInputBorder(
+                  borderRadius:
+                      BorderRadius
+                          .circular(
+                    18,
+                  ),
+
+                  borderSide:
+                      const BorderSide(
+                    color:
+                        primaryOrange,
+                    width: 2,
+                  ),
                 ),
 
                 filled: true,
@@ -269,87 +726,120 @@ class _ProductPageState extends State<ProductPage> {
                     Colors.grey.shade50,
               ),
             ),
+          ),
 
-            const SizedBox(height: 10),
+          // ===================================================
+          // PRODUCTS
+          // ===================================================
 
-            // =================================================
-            // PRODUCTS
-            // =================================================
+          Expanded(
+            child: StreamBuilder<
+                QuerySnapshot<
+                    Map<String, dynamic>>>(
+              stream: _firestore
+                  .collection(
+                    'products',
+                  )
+                  .snapshots(),
 
-            Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream:
-                    FirebaseFirestore
-                        .instance
-                        .collection('products')
-                        .snapshots(),
+              builder:
+                  (context, snapshot) {
+                // ---------------------------------------------
+                // LOADING
+                // ---------------------------------------------
 
-                builder:
-                    (context, snapshot) {
-                  // -------------------------------------------
-                  // LOADING
-                  // -------------------------------------------
+                if (snapshot
+                        .connectionState ==
+                    ConnectionState
+                        .waiting) {
+                  return const Center(
+                    child:
+                        CircularProgressIndicator(
+                      color:
+                          primaryOrange,
+                    ),
+                  );
+                }
 
-                  if (snapshot.connectionState ==
-                      ConnectionState.waiting) {
-                    return const Center(
+                // ---------------------------------------------
+                // ERROR
+                // ---------------------------------------------
+
+                if (snapshot.hasError) {
+                  return Center(
+                    child:
+                        Padding(
+                      padding:
+                          const EdgeInsets
+                              .all(20),
+
                       child:
-                          CircularProgressIndicator(),
-                    );
-                  }
-
-                  // -------------------------------------------
-                  // ERROR
-                  // -------------------------------------------
-
-                  if (snapshot.hasError) {
-                    return const Center(
-                      child: Text(
-                        "Error fetching products.",
+                          Text(
+                        "Error fetching products.\n\n"
+                        "${snapshot.error}",
+                        textAlign:
+                            TextAlign.center,
                       ),
-                    );
-                  }
+                    ),
+                  );
+                }
 
-                  // -------------------------------------------
-                  // NO DATA
-                  // -------------------------------------------
+                // ---------------------------------------------
+                // NO PRODUCTS
+                // ---------------------------------------------
 
-                  if (!snapshot.hasData ||
-                      snapshot.data!.docs.isEmpty) {
-                    return const Center(
-                      child: Text(
-                        "No products available.",
+                if (!snapshot.hasData ||
+                    snapshot
+                        .data!
+                        .docs
+                        .isEmpty) {
+                  return const Center(
+                    child:
+                        Text(
+                      "No products available.",
+                      style:
+                          TextStyle(
+                        fontSize: 16,
                       ),
-                    );
-                  }
+                    ),
+                  );
+                }
 
-                  // -------------------------------------------
-                  // FILTER PRODUCTS
-                  // -------------------------------------------
+                // ---------------------------------------------
+                // FILTER PRODUCTS
+                // ---------------------------------------------
 
-                  final products =
-                      snapshot.data!.docs.where((doc) {
+                final products =
+                    snapshot
+                        .data!
+                        .docs
+                        .where(
+                  (doc) {
                     final data =
-                        doc.data()
-                            as Map<String, dynamic>;
+                        doc.data();
 
                     final title =
-                        (data["title"] ?? "")
+                        (data["title"] ??
+                                "")
                             .toString()
                             .toLowerCase();
 
                     final description =
-                        (data["description"] ?? "")
+                        (data["description"] ??
+                                "")
                             .toString()
                             .toLowerCase();
 
                     final category =
-                        (data["category"] ?? "")
+                        (data["category"] ??
+                                "")
                             .toString()
                             .toLowerCase();
 
                     final subcategory =
-                        (data["subcategory"] ?? "")
+                        (data[
+                                    "subcategory"] ??
+                                "")
                             .toString()
                             .toLowerCase();
 
@@ -368,21 +858,8 @@ class _ProductPageState extends State<ProductPage> {
                       data["searchTerms"],
                     );
 
-                    // ---------------------------------------
-                    // CURRENT SEARCH
-                    //
-                    // We now search across the AI-generated
-                    // catalog fields as well.
-                    //
-                    // This means a user can search things like:
-                    // "wedding"
-                    // "colourful"
-                    // "traditional"
-                    // "bangles"
-                    // etc.
-                    // ---------------------------------------
-
-                    if (_searchQuery.isEmpty) {
+                    if (_searchQuery
+                        .isEmpty) {
                       return true;
                     }
 
@@ -398,98 +875,120 @@ $searchTerms
 '''
                             .toLowerCase();
 
-                    return searchableText.contains(
+                    return searchableText
+                        .contains(
                       _searchQuery,
                     );
-                  }).toList();
+                  },
+                ).toList();
 
-                  // -------------------------------------------
-                  // NO SEARCH RESULTS
-                  // -------------------------------------------
+                // ---------------------------------------------
+                // NO SEARCH RESULTS
+                // ---------------------------------------------
 
-                  if (products.isEmpty) {
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment:
-                            MainAxisAlignment.center,
+                if (products.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment:
+                          MainAxisAlignment
+                              .center,
 
-                        children: [
-                          Icon(
-                            Icons.search_off,
-                            size: 48,
+                      children: [
+                        Icon(
+                          Icons.search_off,
+                          size: 52,
+                          color:
+                              Colors.grey
+                                  .shade400,
+                        ),
+
+                        const SizedBox(
+                          height: 12,
+                        ),
+
+                        const Text(
+                          "No products match your search.",
+                          style:
+                              TextStyle(
+                            fontWeight:
+                                FontWeight
+                                    .w600,
+                            fontSize: 16,
+                          ),
+                        ),
+
+                        const SizedBox(
+                          height: 6,
+                        ),
+
+                        Text(
+                          "Try another search term.",
+                          style:
+                              TextStyle(
                             color:
-                                Colors.grey.shade400,
+                                Colors.grey
+                                    .shade600,
                           ),
-
-                          const SizedBox(height: 12),
-
-                          const Text(
-                            "No products match your search.",
-                            style: TextStyle(
-                              fontWeight:
-                                  FontWeight.w600,
-                            ),
-                          ),
-
-                          const SizedBox(height: 6),
-
-                          Text(
-                            "Try another search term.",
-                            style: TextStyle(
-                              color:
-                                  Colors.grey.shade600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-
-                  // =================================================
-                  // PRODUCT GRID
-                  // =================================================
-
-                  return GridView.builder(
-                    padding:
-                        const EdgeInsets.only(
-                      bottom: 100,
+                        ),
+                      ],
                     ),
-
-                    itemCount:
-                        products.length,
-
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-
-                      crossAxisSpacing: 10,
-
-                      mainAxisSpacing: 10,
-
-                      childAspectRatio: 0.65,
-                    ),
-
-                    itemBuilder:
-                        (context, index) {
-                      final product =
-                          products[index].data()
-                              as Map<String, dynamic>;
-
-                      return _buildProductCard(
-                        product,
-                      );
-                    },
                   );
-                },
-              ),
+                }
+
+                // =================================================
+                // PRODUCT GRID
+                // =================================================
+
+                return GridView.builder(
+                  padding:
+                      const EdgeInsets
+                          .fromLTRB(
+                    14,
+                    6,
+                    14,
+                    120,
+                  ),
+
+                  itemCount:
+                      products.length,
+
+                  gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+
+                    // Horizontal gap
+                    crossAxisSpacing: 12,
+
+                    // More vertical gap
+                    mainAxisSpacing: 18,
+
+                    // Taller cards
+                    childAspectRatio: 0.64,
+                  ),
+
+                  itemBuilder:
+                      (context, index) {
+                    final doc =
+                        products[index];
+
+                    final product =
+                        doc.data();
+
+                    return _buildProductCard(
+                      doc.id,
+                      product,
+                    );
+                  },
+                );
+              },
             ),
-          ],
-        ),
+          ),
+        ],
       ),
 
-      // =====================================================
-      // AI ASSISTANT BUTTON
-      // =====================================================
+      // =======================================================
+      // AI ASSISTANT
+      // =======================================================
 
       floatingActionButton:
           FloatingActionButton.extended(
@@ -501,22 +1000,27 @@ $searchTerms
 
         elevation: 7,
 
-        icon: const Icon(
+        icon:
+            const Icon(
           Icons.auto_awesome,
           color: Colors.white,
         ),
 
-        label: const Text(
+        label:
+            const Text(
           "Assistant",
-          style: TextStyle(
+          style:
+              TextStyle(
             color: Colors.white,
-            fontWeight: FontWeight.w600,
+            fontWeight:
+                FontWeight.w700,
           ),
         ),
       ),
 
       floatingActionButtonLocation:
-          FloatingActionButtonLocation.endFloat,
+          FloatingActionButtonLocation
+              .endFloat,
     );
   }
 
@@ -525,69 +1029,90 @@ $searchTerms
   // =========================================================
 
   Widget _buildProductCard(
+    String productId,
     Map<String, dynamic> product,
   ) {
     final productTitle =
-        (product["title"] ?? "").toString();
-
-    final productDescription =
-        (product["description"] ?? "").toString();
+        (product["title"] ?? "")
+            .toString();
 
     final productPrice =
-        (product["price"] ?? "0").toString();
+        (product["price"] ?? "0")
+            .toString();
 
     final productImage =
-        (product["imageUrl"] ?? "").toString();
-
-    final sellerName =
-        (product["sellerName"] ?? "")
-                .toString()
-                .trim()
-                .isNotEmpty
-            ? product["sellerName"]
-                .toString()
-                .trim()
-            : "Local Artisan";
-
-    final sellerId =
-        (product["sellerId"] ?? "").toString();
+        (product["imageUrl"] ?? "")
+            .toString();
 
     return GestureDetector(
       onTap: () {
         _openProductDetails(
+          productId,
           product,
         );
       },
 
-      child: Card(
-        shape:
-            RoundedRectangleBorder(
-          borderRadius:
-              BorderRadius.circular(12),
+      child: Container(
+        margin:
+            const EdgeInsets.only(
+          bottom: 1,
         ),
 
-        elevation: 4,
+        decoration:
+            BoxDecoration(
+          color:
+              cardBackground,
+
+          borderRadius:
+              BorderRadius.circular(
+            16,
+          ),
+
+          // Downward card shadow
+          boxShadow: [
+            BoxShadow(
+              color:
+                  Colors.black.withOpacity(
+                0.18,
+              ),
+
+              blurRadius: 7,
+
+              spreadRadius: 0,
+
+              offset:
+                  const Offset(
+                0,
+                4,
+              ),
+            ),
+          ],
+        ),
 
         clipBehavior:
             Clip.antiAlias,
 
         child: Column(
           crossAxisAlignment:
-              CrossAxisAlignment.start,
+              CrossAxisAlignment
+                  .start,
 
           children: [
-            // ===============================================
+            // =================================================
             // PRODUCT IMAGE
-            // ===============================================
+            // =================================================
 
-            SizedBox(
-              height: 180,
-              width: double.infinity,
+            AspectRatio(
+              aspectRatio: 1.0,
 
               child: Image.network(
                 productImage,
 
-                fit: BoxFit.cover,
+                width:
+                    double.infinity,
+
+                fit:
+                    BoxFit.cover,
 
                 loadingBuilder:
                     (
@@ -600,10 +1125,18 @@ $searchTerms
                     return child;
                   }
 
-                  return const Center(
+                  return Container(
+                    color:
+                        Colors.grey.shade100,
+
                     child:
-                        CircularProgressIndicator(
-                      strokeWidth: 2,
+                        const Center(
+                      child:
+                          CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color:
+                            primaryOrange,
+                      ),
                     ),
                   );
                 },
@@ -618,10 +1151,15 @@ $searchTerms
                     color:
                         Colors.grey.shade100,
 
-                    child: const Center(
+                    child:
+                        Center(
                       child: Icon(
-                        Icons.broken_image,
-                        size: 35,
+                        Icons
+                            .broken_image_outlined,
+                        size: 38,
+                        color:
+                            Colors.grey
+                                .shade500,
                       ),
                     ),
                   );
@@ -629,95 +1167,37 @@ $searchTerms
               ),
             ),
 
-            // ===============================================
-            // PRODUCT TITLE
-            // ===============================================
+            // =================================================
+            // PRODUCT INFORMATION
+            // =================================================
 
-            Padding(
-              padding:
-                  const EdgeInsets.all(8),
-
-              child: Text(
-                productTitle,
-
-                maxLines: 2,
-
-                overflow:
-                    TextOverflow.ellipsis,
-
-                style:
-                    const TextStyle(
-                  fontWeight:
-                      FontWeight.bold,
+            Expanded(
+              child:
+                  Padding(
+                padding:
+                    const EdgeInsets
+                        .fromLTRB(
+                  10,
+                  10,
+                  10,
+                  9,
                 ),
-              ),
-            ),
 
-            const Spacer(),
+                child:
+                    Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment
+                          .start,
 
-            // ===============================================
-            // BUY BUTTON + PRICE
-            // ===============================================
+                  children: [
+                    // =========================================
+                    // TITLE
+                    // =========================================
 
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 6,
-              ),
+                    Text(
+                      productTitle,
 
-              child: Row(
-                mainAxisAlignment:
-                    MainAxisAlignment
-                        .spaceBetween,
-
-                children: [
-                  // -----------------------------------------
-                  // BUY
-                  // -----------------------------------------
-
-                  ElevatedButton(
-                    onPressed: () {
-                      _openBuyPage(
-                        product,
-                      );
-                    },
-
-                    style:
-                        ElevatedButton
-                            .styleFrom(
-                      backgroundColor:
-                          darkOrange,
-
-                      foregroundColor:
-                          Colors.white,
-
-                      padding:
-                          const EdgeInsets
-                              .symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-
-                      textStyle:
-                          const TextStyle(
-                        fontSize: 12,
-                      ),
-                    ),
-
-                    child:
-                        const Text(
-                      "Buy",
-                    ),
-                  ),
-
-                  // -----------------------------------------
-                  // PRICE
-                  // -----------------------------------------
-
-                  Flexible(
-                    child: Text(
-                      '₹$productPrice',
+                      maxLines: 2,
 
                       overflow:
                           TextOverflow
@@ -725,15 +1205,296 @@ $searchTerms
 
                       style:
                           const TextStyle(
-                        color:
-                            Colors.black,
-
                         fontWeight:
-                            FontWeight.bold,
+                            FontWeight
+                                .w700,
+
+                        fontSize: 15,
+
+                        height: 1.2,
+
+                        color:
+                            Color(
+                          0xFF242124,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+
+                    // =========================================
+                    // SPACE BETWEEN TITLE AND BOTTOM ROW
+                    // =========================================
+
+                    const Spacer(),
+
+                    // =========================================
+                    // BUY + PRICE
+                    // =========================================
+
+                    StreamBuilder<int>(
+                      stream:
+                          _productQuantityStream(
+                        productId,
+                      ),
+
+                      builder:
+                          (
+                        context,
+                        snapshot,
+                      ) {
+                        final quantity =
+                            snapshot
+                                    .data ??
+                                0;
+
+                        return SizedBox(
+                          height: 42,
+
+                          child:
+                              Row(
+                            crossAxisAlignment:
+                                CrossAxisAlignment
+                                    .center,
+
+                            children: [
+                              // =================================
+                              // BUY / CART CONTROL
+                              // =================================
+
+                              if (quantity ==
+                                  0)
+                                SizedBox(
+                                  height:
+                                      42,
+
+                                  child:
+                                      ElevatedButton(
+                                    onPressed:
+                                        () {
+                                      // Add to cart
+                                      // remains functional.
+                                      _addToCart(
+                                        productId,
+                                        product,
+                                      );
+                                    },
+
+                                    style:
+                                        ElevatedButton
+                                            .styleFrom(
+                                      backgroundColor:
+                                          darkOrange,
+
+                                      foregroundColor:
+                                          Colors.white,
+
+                                      elevation:
+                                          1,
+
+                                      padding:
+                                          const EdgeInsets
+                                              .symmetric(
+                                        horizontal:
+                                            23,
+                                      ),
+
+                                      shape:
+                                          RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius
+                                                .circular(
+                                          22,
+                                        ),
+                                      ),
+
+                                      tapTargetSize:
+                                          MaterialTapTargetSize
+                                              .shrinkWrap,
+                                    ),
+
+                                    child:
+                                        const Text(
+                                      "Buy",
+
+                                      style:
+                                          TextStyle(
+                                        fontSize:
+                                            14,
+
+                                        fontWeight:
+                                            FontWeight
+                                                .w500,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              else
+                                Container(
+                                  height:
+                                      42,
+
+                                  decoration:
+                                      BoxDecoration(
+                                    color:
+                                        darkOrange,
+
+                                    borderRadius:
+                                        BorderRadius
+                                            .circular(
+                                      22,
+                                    ),
+                                  ),
+
+                                  child:
+                                      Row(
+                                    mainAxisSize:
+                                        MainAxisSize
+                                            .min,
+
+                                    children: [
+                                      // MINUS
+                                      SizedBox(
+                                        width:
+                                            38,
+
+                                        height:
+                                            42,
+
+                                        child:
+                                            IconButton(
+                                          padding:
+                                              EdgeInsets.zero,
+
+                                          icon:
+                                              const Icon(
+                                            Icons
+                                                .remove,
+                                            color:
+                                                Colors.white,
+                                            size:
+                                                17,
+                                          ),
+
+                                          onPressed:
+                                              () {
+                                            _changeQuantity(
+                                              productId,
+                                              -1,
+                                            );
+                                          },
+                                        ),
+                                      ),
+
+                                      // QUANTITY
+                                      Text(
+                                        quantity
+                                            .toString(),
+
+                                        style:
+                                            const TextStyle(
+                                          color:
+                                              Colors.white,
+
+                                          fontWeight:
+                                              FontWeight
+                                                  .bold,
+
+                                          fontSize:
+                                              14,
+                                        ),
+                                      ),
+
+                                      // PLUS
+                                      SizedBox(
+                                        width:
+                                            38,
+
+                                        height:
+                                            42,
+
+                                        child:
+                                            IconButton(
+                                          padding:
+                                              EdgeInsets.zero,
+
+                                          icon:
+                                              const Icon(
+                                            Icons
+                                                .add,
+                                            color:
+                                                Colors.white,
+                                            size:
+                                                17,
+                                          ),
+
+                                          onPressed:
+                                              () {
+                                            _changeQuantity(
+                                              productId,
+                                              1,
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+
+                              // =================================
+                              // SPACE
+                              // =================================
+
+                              const Spacer(),
+
+                              // =================================
+                              // PRICE - BOTTOM RIGHT
+                              // =================================
+
+                              Flexible(
+                                child:
+                                    Align(
+                                  alignment:
+                                      Alignment
+                                          .centerRight,
+
+                                  child:
+                                      Text(
+                                    '₹$productPrice',
+
+                                    maxLines:
+                                        1,
+
+                                    overflow:
+                                        TextOverflow
+                                            .ellipsis,
+
+                                    textAlign:
+                                        TextAlign
+                                            .right,
+
+                                    style:
+                                        const TextStyle(
+                                      fontWeight:
+                                          FontWeight
+                                              .w700,
+
+                                      fontSize:
+                                          15,
+
+                                      color:
+                                          Color(
+                                        0xFF242124,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -755,8 +1516,9 @@ $searchTerms
 
     return value
         .map(
-          (item) =>
-              item.toString().toLowerCase(),
+          (item) => item
+              .toString()
+              .toLowerCase(),
         )
         .join(' ');
   }

@@ -2,58 +2,218 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
+
 import 'package:proto_app/confirm_page.dart';
 
 class BuyPage extends StatefulWidget {
-  // ---------------------------------------------------------
-  // PRODUCT INFORMATION
-  // ---------------------------------------------------------
+  // =========================================================
+  // SINGLE PRODUCT
+  // =========================================================
 
+  final String productId;
   final String productName;
   final String productPrice;
   final String productImage;
 
-  // ---------------------------------------------------------
-  // SELLER INFORMATION
-  // ---------------------------------------------------------
+  // =========================================================
+  // SELLER
+  // =========================================================
 
   final String sellerName;
   final String sellerId;
 
+  // =========================================================
+  // CART
+  // =========================================================
+
+  final List<Map<String, dynamic>>? cartItems;
+
+  // =========================================================
+  // SINGLE PRODUCT CONSTRUCTOR
+  // =========================================================
+
   const BuyPage({
-    Key? key,
+    super.key,
+    this.productId = "",
     required this.productName,
     required this.productPrice,
     required this.productImage,
     required this.sellerName,
     required this.sellerId,
-  }) : super(key: key);
+    this.cartItems,
+  });
+
+  // =========================================================
+  // CART CONSTRUCTOR
+  // =========================================================
+
+  factory BuyPage.fromCart({
+    required List<Map<String, dynamic>> cartItems,
+  }) {
+    return BuyPage(
+      productId: "",
+      productName: "",
+      productPrice: "0",
+      productImage: "",
+      sellerName: "",
+      sellerId: "",
+      cartItems: cartItems,
+    );
+  }
 
   @override
   State<BuyPage> createState() => _BuyPageState();
 }
 
 class _BuyPageState extends State<BuyPage> {
-  final _formKey = GlobalKey<FormState>();
+  // =========================================================
+  // FORM
+  // =========================================================
 
-  final _nameController = TextEditingController();
-  final _addressController = TextEditingController();
-  final _phoneController = TextEditingController();
+  final GlobalKey<FormState> _formKey =
+      GlobalKey<FormState>();
+
+  final TextEditingController _nameController =
+      TextEditingController();
+
+  final TextEditingController _addressController =
+      TextEditingController();
+
+  final TextEditingController _phoneController =
+      TextEditingController();
+
+  // =========================================================
+  // PAYMENT
+  // =========================================================
 
   String _selectedPayment = "cod";
 
   late Razorpay _razorpay;
 
-  // ---------------------------------------------------------
+  bool _isProcessingOrder = false;
+
+  // =========================================================
+  // COLORS
+  // =========================================================
+
+  static const Color primaryOrange =
+      Color.fromARGB(255, 214, 112, 22);
+
+  static const Color darkOrange =
+      Color.fromARGB(255, 141, 83, 20);
+
+  // =========================================================
   // CHARGES
-  // ---------------------------------------------------------
+  // =========================================================
 
-  final int deliveryCharge = 20;
-  final int platformFee = 1;
+  static const int deliveryCharge = 20;
+  static const int platformFee = 1;
 
-  // ---------------------------------------------------------
-  // INITIALIZE RAZORPAY
-  // ---------------------------------------------------------
+  // =========================================================
+  // IS CART CHECKOUT
+  // =========================================================
+
+  bool get _isCartCheckout =>
+      widget.cartItems != null;
+
+  // =========================================================
+  // SAFE INT CONVERSION
+  // =========================================================
+
+  int _toInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+
+    if (value is double) {
+      return value.round();
+    }
+
+    return int.tryParse(
+          value?.toString() ?? "",
+        ) ??
+        0;
+  }
+
+  // =========================================================
+  // CHECKOUT ITEMS
+  // =========================================================
+
+  List<Map<String, dynamic>> get _items {
+    if (_isCartCheckout) {
+      return widget.cartItems!.map((item) {
+        return {
+          "cartId":
+              (item["cartId"] ?? "").toString(),
+
+          "productId":
+              (item["productId"] ?? "").toString(),
+
+          "title":
+              (item["title"] ?? "").toString(),
+
+          "description":
+              (item["description"] ?? "").toString(),
+
+          "price":
+              (item["price"] ?? "0").toString(),
+
+          "imageUrl":
+              (item["imageUrl"] ?? "").toString(),
+
+          "sellerName":
+              (item["sellerName"] ??
+                      "Local Artisan")
+                  .toString(),
+
+          "sellerId":
+              (item["sellerId"] ?? "").toString(),
+
+          "quantity":
+              _toInt(item["quantity"]) > 0
+                  ? _toInt(item["quantity"])
+                  : 1,
+        };
+      }).toList();
+    }
+
+    // =======================================================
+    // SINGLE PRODUCT
+    // =======================================================
+
+    return [
+      {
+        "cartId": "",
+
+        "productId":
+            widget.productId,
+
+        "title":
+            widget.productName,
+
+        "description":
+            "",
+
+        "price":
+            widget.productPrice,
+
+        "imageUrl":
+            widget.productImage,
+
+        "sellerName":
+            widget.sellerName,
+
+        "sellerId":
+            widget.sellerId,
+
+        "quantity": 1,
+      },
+    ];
+  }
+
+  // =========================================================
+  // INIT STATE
+  // =========================================================
 
   @override
   void initState() {
@@ -77,9 +237,9 @@ class _BuyPageState extends State<BuyPage> {
     );
   }
 
-  // ---------------------------------------------------------
+  // =========================================================
   // DISPOSE
-  // ---------------------------------------------------------
+  // =========================================================
 
   @override
   void dispose() {
@@ -93,30 +253,38 @@ class _BuyPageState extends State<BuyPage> {
   }
 
   // =========================================================
-  // RAZORPAY PAYMENT SUCCESS
+  // PAYMENT SUCCESS
   // =========================================================
 
   void _handlePaymentSuccess(
     PaymentSuccessResponse response,
   ) {
-    _saveOrder(
-      status: 'done',
+    _saveOrders(
+      status: "done",
       payId: response.paymentId,
     );
   }
 
   // =========================================================
-  // RAZORPAY PAYMENT FAILURE
+  // PAYMENT FAILURE
   // =========================================================
 
   void _handlePaymentError(
     PaymentFailureResponse response,
   ) {
+    if (!mounted) return;
+
+    setState(() {
+      _isProcessingOrder = false;
+    });
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Payment failed: ${response.message}',
+          "Payment failed: "
+          "${response.message ?? "Please try again."}",
         ),
+        backgroundColor: Colors.red.shade700,
       ),
     );
   }
@@ -128,155 +296,291 @@ class _BuyPageState extends State<BuyPage> {
   void _handleExternalWallet(
     ExternalWalletResponse response,
   ) {
+    if (!mounted) return;
+
+    setState(() {
+      _isProcessingOrder = false;
+    });
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'External wallet selected: ${response.walletName}',
+          "External wallet selected: "
+          "${response.walletName ?? "Wallet"}",
         ),
       ),
     );
   }
 
   // =========================================================
-  // SAVE ORDER TO FIRESTORE
+  // SAVE ORDERS
   // =========================================================
 
-  Future<void> _saveOrder({
+  Future<void> _saveOrders({
     required String status,
     String? payId,
   }) async {
     final currentUser =
         FirebaseAuth.instance.currentUser;
 
-    final userEmail =
-        currentUser?.email ?? "guest";
+    if (currentUser == null) {
+      if (!mounted) return;
 
-    final userId =
-        currentUser?.uid ?? "";
-
-    try {
-      await FirebaseFirestore.instance
-          .collection('orders')
-          .add({
-
-        // -----------------------------------------------------
-        // PRODUCT INFORMATION
-        // -----------------------------------------------------
-
-        'productName': widget.productName,
-
-        'productPrice': widget.productPrice,
-
-        'productImage': widget.productImage,
-
-        // -----------------------------------------------------
-        // SELLER INFORMATION
-        //
-        // This is important for the Razorpay Buildathon.
-        // It connects the order to the seller.
-        // -----------------------------------------------------
-
-        'sellerId': widget.sellerId,
-
-        'sellerName': widget.sellerName,
-
-        // -----------------------------------------------------
-        // CUSTOMER INFORMATION
-        // -----------------------------------------------------
-
-        'userId': userId,
-
-        'email': userEmail,
-
-        'fullName': _nameController.text.trim(),
-
-        'address': _addressController.text.trim(),
-
-        'phone': _phoneController.text.trim(),
-
-        // -----------------------------------------------------
-        // PAYMENT INFORMATION
-        // -----------------------------------------------------
-
-        'paymentMethod': _selectedPayment,
-
-        'paymentStatus': status,
-
-        'paymentId': payId ?? '',
-
-        // -----------------------------------------------------
-        // ORDER TIMESTAMP
-        // -----------------------------------------------------
-
-        'timestamp': FieldValue.serverTimestamp(),
+      setState(() {
+        _isProcessingOrder = false;
       });
 
-      // -------------------------------------------------------
-      // GO TO CONFIRMATION PAGE
-      // -------------------------------------------------------
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+              Text("Please log in before placing an order."),
+        ),
+      );
+
+      return;
+    }
+
+    try {
+      final firestore =
+          FirebaseFirestore.instance;
+
+      final batch =
+          firestore.batch();
+
+      // =====================================================
+      // CREATE ONE ORDER PER PRODUCT
+      // =====================================================
+
+      for (final item in _items) {
+        final orderRef =
+            firestore
+                .collection("orders")
+                .doc();
+
+        final price =
+            _toInt(item["price"]);
+
+        final quantity =
+            _toInt(item["quantity"]) > 0
+                ? _toInt(item["quantity"])
+                : 1;
+
+        final itemTotal =
+            price * quantity;
+
+        batch.set(
+          orderRef,
+          {
+            // ===============================================
+            // PRODUCT
+            // ===============================================
+
+            "productId":
+                item["productId"] ?? "",
+
+            "productName":
+                item["title"] ?? "",
+
+            "productPrice":
+                item["price"] ?? "0",
+
+            "productImage":
+                item["imageUrl"] ?? "",
+
+            "quantity":
+                quantity,
+
+            "itemTotal":
+                itemTotal,
+
+            // ===============================================
+            // SELLER
+            // ===============================================
+
+            "sellerId":
+                item["sellerId"] ?? "",
+
+            "sellerName":
+                item["sellerName"] ??
+                    "Local Artisan",
+
+            // ===============================================
+            // CUSTOMER
+            // ===============================================
+
+            "userId":
+                currentUser.uid,
+
+            "email":
+                currentUser.email ?? "",
+
+            "fullName":
+                _nameController.text.trim(),
+
+            "address":
+                _addressController.text.trim(),
+
+            "phone":
+                _phoneController.text.trim(),
+
+            // ===============================================
+            // PAYMENT
+            // ===============================================
+
+            "paymentMethod":
+                _selectedPayment,
+
+            "paymentStatus":
+                status,
+
+            "paymentId":
+                payId ?? "",
+
+            // ===============================================
+            // ORDER STATUS
+            // ===============================================
+
+            "orderStatus":
+                status == "done"
+                    ? "confirmed"
+                    : "pending",
+
+            // ===============================================
+            // TIMESTAMP
+            // ===============================================
+
+            "timestamp":
+                FieldValue.serverTimestamp(),
+          },
+        );
+      }
+
+      // =====================================================
+      // COMMIT ORDERS
+      // =====================================================
+
+      await batch.commit();
+
+      // =====================================================
+      // CLEAR CART AFTER SUCCESSFUL ORDER
+      // =====================================================
+
+      if (_isCartCheckout) {
+        final cartSnapshot =
+            await firestore
+                .collection("users")
+                .doc(currentUser.uid)
+                .collection("cart")
+                .get();
+
+        if (cartSnapshot.docs.isNotEmpty) {
+          final cartBatch =
+              firestore.batch();
+
+          for (final doc
+              in cartSnapshot.docs) {
+            cartBatch.delete(
+              doc.reference,
+            );
+          }
+
+          await cartBatch.commit();
+        }
+      }
+
+      // =====================================================
+      // FINISH
+      // =====================================================
 
       if (!mounted) return;
+
+      setState(() {
+        _isProcessingOrder = false;
+      });
 
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) =>
+          builder: (_) =>
               const ConfirmPage(),
         ),
       );
-
     } catch (e) {
-
       if (!mounted) return;
+
+      setState(() {
+        _isProcessingOrder = false;
+      });
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            "Order save failed: $e",
-          ),
+          content:
+              Text("Order save failed: $e"),
+          backgroundColor:
+              Colors.red.shade700,
         ),
       );
     }
   }
 
   // =========================================================
-  // START RAZORPAY PAYMENT
+  // START ONLINE PAYMENT
   // =========================================================
 
-  void _startOnlinePayment(int amount) {
+  void _startOnlinePayment(
+    int amount,
+  ) {
+    final currentUser =
+        FirebaseAuth.instance.currentUser;
 
-    var options = {
+    final options = {
+      "key":
+          "rzp_test_soO0DVUQSdQ81X",
 
-      // -------------------------------------------------------
-      // YOUR RAZORPAY TEST KEY
-      // -------------------------------------------------------
+      // Razorpay expects paise
+      "amount":
+          amount * 100,
 
-      'key': 'rzp_test_soO0DVUQSdQ81X',
+      "name":
+          "Karigari",
 
-      // Razorpay expects amount in paise
-      'amount': amount * 100,
+      "description":
+          _isCartCheckout
+              ? "Karigari Cart Checkout"
+              : "Payment for ${widget.productName}",
 
-      // -------------------------------------------------------
-      // PAYMENT WINDOW
-      // -------------------------------------------------------
+      "prefill": {
+        "contact":
+            _phoneController.text.trim(),
 
-      'name': 'Karigari',
+        "email":
+            currentUser?.email ?? "",
+      },
 
-      'description':
-          'Payment for ${widget.productName}',
-
-      // -------------------------------------------------------
-      // CUSTOMER DETAILS
-      // -------------------------------------------------------
-
-      'prefill': {
-        'contact': _phoneController.text.trim(),
-        'email':
-            FirebaseAuth.instance.currentUser?.email ?? '',
+      "theme": {
+        "color":
+            "#D67016",
       },
     };
 
-    _razorpay.open(options);
+    try {
+      _razorpay.open(options);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isProcessingOrder = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content:
+              Text("Unable to open payment: $e"),
+          backgroundColor:
+              Colors.red.shade700,
+        ),
+      );
+    }
   }
 
   // =========================================================
@@ -284,78 +588,120 @@ class _BuyPageState extends State<BuyPage> {
   // =========================================================
 
   void _confirmOrder() {
-
-    // Validate shipping form
-    if (!_formKey.currentState!.validate()) {
+    if (_isProcessingOrder) {
       return;
     }
 
-    final int price =
-        int.tryParse(widget.productPrice) ?? 0;
+    if (!_formKey.currentState!
+        .validate()) {
+      return;
+    }
+
+    if (_items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+              Text("There are no items to purchase."),
+        ),
+      );
+
+      return;
+    }
+
+    final subtotal =
+        _calculateSubtotal();
 
     final total =
-        price +
+        subtotal +
         deliveryCharge +
         platformFee;
 
-    // -------------------------------------------------------
-    // CASH ON DELIVERY
-    // -------------------------------------------------------
+    setState(() {
+      _isProcessingOrder = true;
+    });
+
+    // =======================================================
+    // COD
+    // =======================================================
 
     if (_selectedPayment == "cod") {
-
-      _saveOrder(
+      _saveOrders(
         status: "pending",
       );
 
+      return;
     }
 
-    // -------------------------------------------------------
-    // ONLINE PAYMENT
-    // -------------------------------------------------------
+    // =======================================================
+    // ONLINE
+    // =======================================================
 
-    else {
-
-      _startOnlinePayment(total);
-    }
+    _startOnlinePayment(total);
   }
 
   // =========================================================
-  // BUILD UI
+  // CALCULATE SUBTOTAL
+  // =========================================================
+
+  int _calculateSubtotal() {
+    int subtotal = 0;
+
+    for (final item in _items) {
+      final price =
+          _toInt(item["price"]);
+
+      final quantity =
+          _toInt(item["quantity"]) > 0
+              ? _toInt(item["quantity"])
+              : 1;
+
+      subtotal +=
+          price * quantity;
+    }
+
+    return subtotal;
+  }
+
+  // =========================================================
+  // BUILD
   // =========================================================
 
   @override
   Widget build(BuildContext context) {
+    final subtotal =
+        _calculateSubtotal();
 
-    final int price =
-        int.tryParse(widget.productPrice) ?? 0;
-
-    final int total =
-        price +
+    final total =
+        subtotal +
         deliveryCharge +
         platformFee;
 
     return Scaffold(
+      backgroundColor:
+          Colors.grey.shade50,
 
       // =======================================================
       // APP BAR
       // =======================================================
 
       appBar: AppBar(
+        elevation: 0,
+
+        backgroundColor:
+            primaryOrange,
+
+        iconTheme:
+            const IconThemeData(
+          color: Colors.white,
+        ),
 
         title: const Text(
           "Checkout",
           style: TextStyle(
             color: Colors.white,
+            fontWeight:
+                FontWeight.w600,
           ),
-        ),
-
-        backgroundColor:
-            const Color.fromARGB(
-          255,
-          222,
-          128,
-          47,
         ),
       ),
 
@@ -363,387 +709,340 @@ class _BuyPageState extends State<BuyPage> {
       // BODY
       // =======================================================
 
-      body: SingleChildScrollView(
+      body: Form(
+        key: _formKey,
 
-        padding: const EdgeInsets.all(16),
-
-        child: Form(
-
-          key: _formKey,
+        child: SingleChildScrollView(
+          padding:
+              const EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            110,
+          ),
 
           child: Column(
             crossAxisAlignment:
                 CrossAxisAlignment.start,
 
             children: [
-
               // =================================================
-              // PRODUCT CARD
-              // =================================================
-
-              Card(
-                elevation: 4,
-
-                shape:
-                    RoundedRectangleBorder(
-                  borderRadius:
-                      BorderRadius.circular(10),
-                ),
-
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-
-                  children: [
-
-                    // -------------------------------------------
-                    // PRODUCT IMAGE
-                    // -------------------------------------------
-
-                    ClipRRect(
-
-                      borderRadius:
-                          const BorderRadius.vertical(
-                        top: Radius.circular(10),
-                      ),
-
-                      child: Image.network(
-
-                        widget.productImage,
-
-                        height: 200,
-
-                        width: double.infinity,
-
-                        fit: BoxFit.cover,
-
-                        errorBuilder:
-                            (context, error, stackTrace) {
-                          return const SizedBox(
-                            height: 200,
-                            child: Center(
-                              child: Text(
-                                "Image failed to load",
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    // -------------------------------------------
-                    // PRODUCT INFORMATION
-                    // -------------------------------------------
-
-                    Padding(
-                      padding:
-                          const EdgeInsets.all(12),
-
-                      child: Column(
-                        crossAxisAlignment:
-                            CrossAxisAlignment.start,
-
-                        children: [
-
-                          Text(
-                            widget.productName,
-
-                            style:
-                                const TextStyle(
-                              fontSize: 20,
-                              fontWeight:
-                                  FontWeight.bold,
-                            ),
-                          ),
-
-                          const SizedBox(height: 4),
-
-                          Text(
-                            "₹${widget.productPrice}",
-
-                            style:
-                                const TextStyle(
-                              fontSize: 18,
-                              color: Colors.green,
-                            ),
-                          ),
-
-                          const SizedBox(height: 8),
-
-                          // -------------------------------------
-                          // SELLER
-                          // -------------------------------------
-
-                          Row(
-                            children: [
-
-                              Icon(
-                                Icons.storefront,
-                                size: 17,
-                                color:
-                                    Colors.grey[700],
-                              ),
-
-                              const SizedBox(width: 6),
-
-                              Text(
-                                "Sold by: ",
-
-                                style:
-                                    TextStyle(
-                                  fontSize: 14,
-                                  color:
-                                      Colors.grey[700],
-                                ),
-                              ),
-
-                              Expanded(
-                                child: Text(
-                                  widget.sellerName,
-
-                                  style:
-                                      const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight:
-                                        FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // =================================================
-              // SHIPPING DETAILS
+              // YOUR ITEMS
               // =================================================
 
               const Text(
-                "Shipping Details",
-
+                "Your Items",
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: 19,
                   fontWeight:
                       FontWeight.bold,
                 ),
               ),
 
-              const SizedBox(height: 10),
+              const SizedBox(
+                height: 10,
+              ),
 
-              // -------------------------------------------------
-              // FULL NAME
-              // -------------------------------------------------
+              ..._items.map(
+                (item) =>
+                    _buildProductCard(item),
+              ),
+
+              const SizedBox(
+                height: 22,
+              ),
+
+              // =================================================
+              // SHIPPING
+              // =================================================
+
+              _buildSectionTitle(
+                "Shipping Details",
+              ),
+
+              const SizedBox(
+                height: 12,
+              ),
 
               TextFormField(
-
                 controller:
                     _nameController,
 
+                textCapitalization:
+                    TextCapitalization.words,
+
                 decoration:
-                    const InputDecoration(
-                  labelText: "Full Name",
+                    InputDecoration(
+                  labelText:
+                      "Full Name",
+                  prefixIcon:
+                      const Icon(
+                    Icons.person_outline,
+                  ),
                   border:
-                      OutlineInputBorder(),
+                      OutlineInputBorder(
+                    borderRadius:
+                        BorderRadius.circular(
+                      12,
+                    ),
+                  ),
+                  filled: true,
+                  fillColor:
+                      Colors.white,
                 ),
 
                 validator: (value) {
-
                   if (value == null ||
                       value.trim().isEmpty) {
+                    return
+                        "Enter your name";
+                  }
 
-                    return "Enter your name";
+                  if (value.trim().length <
+                      2) {
+                    return
+                        "Enter a valid name";
                   }
 
                   return null;
                 },
               ),
 
-              const SizedBox(height: 12),
-
-              // -------------------------------------------------
-              // ADDRESS
-              // -------------------------------------------------
+              const SizedBox(
+                height: 12,
+              ),
 
               TextFormField(
-
                 controller:
                     _addressController,
 
-                maxLines: 2,
+                maxLines: 3,
+
+                textCapitalization:
+                    TextCapitalization.sentences,
 
                 decoration:
-                    const InputDecoration(
+                    InputDecoration(
                   labelText:
                       "Shipping Address",
+                  prefixIcon:
+                      const Padding(
+                    padding:
+                        EdgeInsets.only(
+                      bottom: 45,
+                    ),
+                    child: Icon(
+                      Icons
+                          .location_on_outlined,
+                    ),
+                  ),
+                  alignLabelWithHint:
+                      true,
                   border:
-                      OutlineInputBorder(),
+                      OutlineInputBorder(
+                    borderRadius:
+                        BorderRadius.circular(
+                      12,
+                    ),
+                  ),
+                  filled: true,
+                  fillColor:
+                      Colors.white,
                 ),
 
                 validator: (value) {
-
                   if (value == null ||
                       value.trim().isEmpty) {
+                    return
+                        "Enter your address";
+                  }
 
-                    return "Enter your address";
+                  if (value.trim().length <
+                      10) {
+                    return
+                        "Enter a complete address";
                   }
 
                   return null;
                 },
               ),
 
-              const SizedBox(height: 12),
-
-              // -------------------------------------------------
-              // PHONE
-              // -------------------------------------------------
+              const SizedBox(
+                height: 12,
+              ),
 
               TextFormField(
-
                 controller:
                     _phoneController,
-
-                decoration:
-                    const InputDecoration(
-                  labelText:
-                      "Phone Number",
-                  border:
-                      OutlineInputBorder(),
-                ),
 
                 keyboardType:
                     TextInputType.phone,
 
+                maxLength: 10,
+
+                decoration:
+                    InputDecoration(
+                  labelText:
+                      "Phone Number",
+                  prefixIcon:
+                      const Icon(
+                    Icons.phone_outlined,
+                  ),
+                  counterText: "",
+                  prefixText:
+                      "+91  ",
+                  border:
+                      OutlineInputBorder(
+                    borderRadius:
+                        BorderRadius.circular(
+                      12,
+                    ),
+                  ),
+                  filled: true,
+                  fillColor:
+                      Colors.white,
+                ),
+
                 validator: (value) {
+                  final phone =
+                      value?.trim() ?? "";
 
-                  if (value == null ||
-                      value.trim().isEmpty) {
+                  if (phone.isEmpty) {
+                    return
+                        "Enter your phone number";
+                  }
 
-                    return "Enter your phone";
+                  if (!RegExp(
+                    r'^[0-9]{10}$',
+                  ).hasMatch(phone)) {
+                    return
+                        "Enter a valid 10-digit phone number";
                   }
 
                   return null;
                 },
               ),
 
-              const SizedBox(height: 20),
+              const SizedBox(
+                height: 24,
+              ),
 
               // =================================================
-              // PAYMENT METHOD
+              // PAYMENT
               // =================================================
 
-              const Text(
+              _buildSectionTitle(
                 "Payment Method",
-
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight:
-                      FontWeight.bold,
-                ),
               ),
 
-              // -------------------------------------------------
-              // COD
-              // -------------------------------------------------
+              const SizedBox(
+                height: 10,
+              ),
 
-              RadioListTile<String>(
-
+              _buildPaymentOption(
                 title:
-                    const Text(
-                  "Cash on Delivery (COD)",
-                ),
-
-                value: "cod",
-
-                groupValue:
-                    _selectedPayment,
-
-                onChanged: (value) {
-
-                  setState(() {
-
-                    _selectedPayment =
-                        value!;
-                  });
-                },
+                    "Cash on Delivery",
+                subtitle:
+                    "Pay when your order arrives",
+                value:
+                    "cod",
+                icon:
+                    Icons
+                        .payments_outlined,
               ),
 
-              // -------------------------------------------------
-              // RAZORPAY
-              // -------------------------------------------------
+              const SizedBox(
+                height: 10,
+              ),
 
-              RadioListTile<String>(
-
+              _buildPaymentOption(
                 title:
-                    const Text(
-                  "Card/UPI (Razorpay)",
-                ),
-
-                value: "online",
-
-                groupValue:
-                    _selectedPayment,
-
-                onChanged: (value) {
-
-                  setState(() {
-
-                    _selectedPayment =
-                        value!;
-                  });
-                },
+                    "Card / UPI",
+                subtitle:
+                    "Secure payment through Razorpay",
+                value:
+                    "online",
+                icon:
+                    Icons
+                        .account_balance_wallet_outlined,
               ),
 
-              const SizedBox(height: 20),
+              const SizedBox(
+                height: 24,
+              ),
 
               // =================================================
               // ORDER SUMMARY
               // =================================================
 
-              const Divider(
-                thickness: 1,
-              ),
-
-              const Text(
+              _buildSectionTitle(
                 "Order Summary",
+              ),
 
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight:
-                      FontWeight.bold,
+              const SizedBox(
+                height: 12,
+              ),
+
+              Container(
+                padding:
+                    const EdgeInsets.all(
+                  16,
                 ),
-              ),
 
-              const SizedBox(height: 8),
+                decoration:
+                    BoxDecoration(
+                  color:
+                      Colors.white,
 
-              _buildSummaryRow(
-                "Item Price",
-                price,
-              ),
+                  borderRadius:
+                      BorderRadius.circular(
+                    14,
+                  ),
 
-              _buildSummaryRow(
-                "Delivery Charge",
-                deliveryCharge,
-              ),
+                  border:
+                      Border.all(
+                    color:
+                        Colors.grey.shade200,
+                  ),
+                ),
 
-              _buildSummaryRow(
-                "Platform Fee",
-                platformFee,
-              ),
+                child: Column(
+                  children: [
+                    _buildSummaryRow(
+                      "Item Total",
+                      subtotal,
+                    ),
 
-              const Divider(
-                thickness: 1,
-              ),
+                    _buildSummaryRow(
+                      "Delivery Charge",
+                      deliveryCharge,
+                    ),
 
-              _buildSummaryRow(
-                "Total",
-                total,
-                isBold: true,
+                    _buildSummaryRow(
+                      "Platform Fee",
+                      platformFee,
+                    ),
+
+                    Padding(
+                      padding:
+                          const EdgeInsets
+                              .symmetric(
+                        vertical: 10,
+                      ),
+                      child:
+                          Divider(
+                        color:
+                            Colors.grey.shade300,
+                      ),
+                    ),
+
+                    _buildSummaryRow(
+                      "Total",
+                      total,
+                      isBold: true,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -755,47 +1054,99 @@ class _BuyPageState extends State<BuyPage> {
       // =======================================================
 
       bottomNavigationBar:
-
-          Padding(
-        padding:
-            const EdgeInsets.all(16),
-
-        child: ElevatedButton(
-
-          style:
-              ElevatedButton.styleFrom(
-
-            backgroundColor:
-                const Color.fromARGB(
-              255,
-              222,
-              128,
-              47,
-            ),
-
-            padding:
-                const EdgeInsets.symmetric(
-              vertical: 14,
-            ),
-
-            textStyle:
-                const TextStyle(
-              fontSize: 16,
-            ),
+          SafeArea(
+        child: Container(
+          padding:
+              const EdgeInsets.fromLTRB(
+            16,
+            10,
+            16,
+            12,
           ),
 
-          onPressed:
-              _confirmOrder,
+          decoration:
+              BoxDecoration(
+            color:
+                Colors.white,
 
-          child: Text(
+            boxShadow: [
+              BoxShadow(
+                color:
+                    Colors.black
+                        .withOpacity(
+                  0.08,
+                ),
+                blurRadius:
+                    14,
+                offset:
+                    const Offset(
+                  0,
+                  -4,
+                ),
+              ),
+            ],
+          ),
 
-            "Pay ₹$total",
+          child:
+              SizedBox(
+            width:
+                double.infinity,
 
-            style:
-                const TextStyle(
-              color: Colors.white,
-              fontWeight:
-                  FontWeight.bold,
+            height: 54,
+
+            child:
+                ElevatedButton(
+              onPressed:
+                  _isProcessingOrder
+                      ? null
+                      : _confirmOrder,
+
+              style:
+                  ElevatedButton.styleFrom(
+                backgroundColor:
+                    darkOrange,
+
+                disabledBackgroundColor:
+                    Colors.grey.shade400,
+
+                foregroundColor:
+                    Colors.white,
+
+                elevation: 0,
+
+                shape:
+                    RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(
+                    13,
+                  ),
+                ),
+              ),
+
+              child:
+                  _isProcessingOrder
+                      ? const SizedBox(
+                          height: 23,
+                          width: 23,
+                          child:
+                              CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color:
+                                Colors.white,
+                          ),
+                        )
+                      : Text(
+                          _selectedPayment ==
+                                  "cod"
+                              ? "Place Order • ₹$total"
+                              : "Pay ₹$total",
+                          style:
+                              const TextStyle(
+                            fontSize: 16,
+                            fontWeight:
+                                FontWeight.bold,
+                          ),
+                        ),
             ),
           ),
         ),
@@ -804,7 +1155,402 @@ class _BuyPageState extends State<BuyPage> {
   }
 
   // =========================================================
-  // ORDER SUMMARY ROW
+  // SECTION TITLE
+  // =========================================================
+
+  Widget _buildSectionTitle(
+    String title,
+  ) {
+    return Text(
+      title,
+      style:
+          const TextStyle(
+        fontSize: 19,
+        fontWeight:
+            FontWeight.bold,
+      ),
+    );
+  }
+
+  // =========================================================
+  // PAYMENT OPTION
+  // =========================================================
+
+  Widget _buildPaymentOption({
+    required String title,
+    required String subtitle,
+    required String value,
+    required IconData icon,
+  }) {
+    final selected =
+        _selectedPayment == value;
+
+    return InkWell(
+      borderRadius:
+          BorderRadius.circular(14),
+
+      onTap: _isProcessingOrder
+          ? null
+          : () {
+              setState(() {
+                _selectedPayment =
+                    value;
+              });
+            },
+
+      child: AnimatedContainer(
+        duration:
+            const Duration(
+          milliseconds: 180,
+        ),
+
+        padding:
+            const EdgeInsets.all(
+          14,
+        ),
+
+        decoration:
+            BoxDecoration(
+          color:
+              selected
+                  ? primaryOrange
+                      .withOpacity(
+                    0.08,
+                  )
+                  : Colors.white,
+
+          borderRadius:
+              BorderRadius.circular(
+            14,
+          ),
+
+          border:
+              Border.all(
+            color:
+                selected
+                    ? primaryOrange
+                    : Colors.grey.shade300,
+
+            width:
+                selected
+                    ? 1.5
+                    : 1,
+          ),
+        ),
+
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+
+              decoration:
+                  BoxDecoration(
+                color:
+                    selected
+                        ? primaryOrange
+                        : Colors.grey.shade100,
+
+                borderRadius:
+                    BorderRadius.circular(
+                  10,
+                ),
+              ),
+
+              child:
+                  Icon(
+                icon,
+
+                color:
+                    selected
+                        ? Colors.white
+                        : Colors.grey.shade700,
+              ),
+            ),
+
+            const SizedBox(
+              width: 12,
+            ),
+
+            Expanded(
+              child:
+                  Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+
+                children: [
+                  Text(
+                    title,
+                    style:
+                        const TextStyle(
+                      fontWeight:
+                          FontWeight.w600,
+                      fontSize: 15,
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 3,
+                  ),
+
+                  Text(
+                    subtitle,
+                    style:
+                        TextStyle(
+                      fontSize: 12,
+                      color:
+                          Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            Radio<String>(
+              value:
+                  value,
+
+              groupValue:
+                  _selectedPayment,
+
+              activeColor:
+                  primaryOrange,
+
+              onChanged:
+                  _isProcessingOrder
+                      ? null
+                      : (newValue) {
+                          if (newValue ==
+                              null) {
+                            return;
+                          }
+
+                          setState(() {
+                            _selectedPayment =
+                                newValue;
+                          });
+                        },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // =========================================================
+  // PRODUCT CARD
+  // =========================================================
+
+  Widget _buildProductCard(
+    Map<String, dynamic> item,
+  ) {
+    final title =
+        (item["title"] ?? "")
+            .toString();
+
+    final image =
+        (item["imageUrl"] ?? "")
+            .toString();
+
+    final seller =
+        (item["sellerName"] ??
+                "Local Artisan")
+            .toString();
+
+    final price =
+        _toInt(item["price"]);
+
+    final quantity =
+        _toInt(item["quantity"]) > 0
+            ? _toInt(item["quantity"])
+            : 1;
+
+    final itemTotal =
+        price * quantity;
+
+    return Container(
+      margin:
+          const EdgeInsets.only(
+        bottom: 10,
+      ),
+
+      padding:
+          const EdgeInsets.all(
+        10,
+      ),
+
+      decoration:
+          BoxDecoration(
+        color:
+            Colors.white,
+
+        borderRadius:
+            BorderRadius.circular(
+          14,
+        ),
+
+        border:
+            Border.all(
+          color:
+              Colors.grey.shade200,
+        ),
+      ),
+
+      child: Row(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+
+        children: [
+          // ===================================================
+          // IMAGE
+          // ===================================================
+
+          ClipRRect(
+            borderRadius:
+                BorderRadius.circular(
+              10,
+            ),
+
+            child: image.isNotEmpty
+                ? Image.network(
+                    image,
+
+                    width: 82,
+                    height: 82,
+
+                    fit: BoxFit.cover,
+
+                    errorBuilder:
+                        (
+                      context,
+                      error,
+                      stackTrace,
+                    ) {
+                      return _imagePlaceholder();
+                    },
+                  )
+                : _imagePlaceholder(),
+          ),
+
+          const SizedBox(
+            width: 12,
+          ),
+
+          // ===================================================
+          // INFO
+          // ===================================================
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
+
+              children: [
+                Text(
+                  title.isEmpty
+                      ? "Product"
+                      : title,
+
+                  maxLines: 2,
+
+                  overflow:
+                      TextOverflow.ellipsis,
+
+                  style:
+                      const TextStyle(
+                    fontWeight:
+                        FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+
+                const SizedBox(
+                  height: 4,
+                ),
+
+                Text(
+                  "Sold by: $seller",
+
+                  maxLines: 1,
+
+                  overflow:
+                      TextOverflow.ellipsis,
+
+                  style:
+                      TextStyle(
+                    fontSize: 12,
+                    color:
+                        Colors.grey.shade600,
+                  ),
+                ),
+
+                const SizedBox(
+                  height: 7,
+                ),
+
+                Row(
+                  mainAxisAlignment:
+                      MainAxisAlignment
+                          .spaceBetween,
+
+                  children: [
+                    Text(
+                      "₹$price × $quantity",
+
+                      style:
+                          const TextStyle(
+                        fontWeight:
+                            FontWeight.w600,
+                      ),
+                    ),
+
+                    Text(
+                      "₹$itemTotal",
+
+                      style:
+                          const TextStyle(
+                        fontWeight:
+                            FontWeight.bold,
+                        color:
+                            darkOrange,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =========================================================
+  // IMAGE PLACEHOLDER
+  // =========================================================
+
+  Widget _imagePlaceholder() {
+    return Container(
+      width: 82,
+      height: 82,
+
+      color:
+          Colors.grey.shade100,
+
+      child: Icon(
+        Icons
+            .image_not_supported_outlined,
+
+        color:
+            Colors.grey.shade400,
+
+        size: 30,
+      ),
+    );
+  }
+
+  // =========================================================
+  // SUMMARY ROW
   // =========================================================
 
   Widget _buildSummaryRow(
@@ -812,44 +1558,57 @@ class _BuyPageState extends State<BuyPage> {
     int amount, {
     bool isBold = false,
   }) {
-
     return Padding(
-
       padding:
           const EdgeInsets.symmetric(
-        vertical: 4,
+        vertical: 5,
       ),
 
       child: Row(
-
         mainAxisAlignment:
-            MainAxisAlignment.spaceBetween,
+            MainAxisAlignment
+                .spaceBetween,
 
         children: [
-
           Text(
             label,
 
-            style: TextStyle(
-              fontSize: 16,
+            style:
+                TextStyle(
+              fontSize:
+                  isBold
+                      ? 17
+                      : 15,
 
               fontWeight:
                   isBold
                       ? FontWeight.bold
                       : FontWeight.normal,
+
+              color:
+                  Colors.grey.shade800,
             ),
           ),
 
           Text(
             "₹$amount",
 
-            style: TextStyle(
-              fontSize: 16,
+            style:
+                TextStyle(
+              fontSize:
+                  isBold
+                      ? 18
+                      : 15,
 
               fontWeight:
                   isBold
                       ? FontWeight.bold
-                      : FontWeight.normal,
+                      : FontWeight.w500,
+
+              color:
+                  isBold
+                      ? darkOrange
+                      : Colors.grey.shade900,
             ),
           ),
         ],

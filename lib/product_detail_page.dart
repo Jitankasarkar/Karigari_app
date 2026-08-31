@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
 import 'package:proto_app/buy_page.dart';
+import 'package:proto_app/add_to_cart_page.dart';
 
 class ProductDetailPage extends StatelessWidget {
   final Map<String, String> product;
@@ -11,9 +15,6 @@ class ProductDetailPage extends StatelessWidget {
 
   // =========================================================
   // OPEN PRODUCT DETAIL PAGE
-  //
-  // Use this method from the AI Assistant or ProductPage.
-  // It preloads the product image before navigating.
   // =========================================================
 
   static Future<void> open(
@@ -38,14 +39,14 @@ class ProductDetailPage extends StatelessWidget {
           context,
         );
       } catch (_) {
-        // If image preload fails, still open the page.
+        // Still open the page if image preload fails.
       }
     }
 
     if (!context.mounted) return;
 
     // ---------------------------------------------------------
-    // LIGHTWEIGHT FADE TRANSITION
+    // FADE TRANSITION
     // ---------------------------------------------------------
 
     Navigator.of(context).push(
@@ -118,10 +119,6 @@ class ProductDetailPage extends StatelessWidget {
         height: 260,
         fit: BoxFit.cover,
 
-        // -----------------------------------------------------
-        // IMAGE BUILDER
-        // -----------------------------------------------------
-
         frameBuilder:
             (
           context,
@@ -141,10 +138,6 @@ class ProductDetailPage extends StatelessWidget {
             child: child,
           );
         },
-
-        // -----------------------------------------------------
-        // LOADING
-        // -----------------------------------------------------
 
         loadingBuilder:
             (
@@ -170,10 +163,6 @@ class ProductDetailPage extends StatelessWidget {
             ),
           );
         },
-
-        // -----------------------------------------------------
-        // ERROR
-        // -----------------------------------------------------
 
         errorBuilder:
             (
@@ -208,11 +197,651 @@ class ProductDetailPage extends StatelessWidget {
     );
   }
 
+  // =========================================================
+  // CART REFERENCE
+  // =========================================================
+
+  DocumentReference<Map<String, dynamic>> _cartReference(
+    String userId,
+    String productId,
+  ) {
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(userId)
+        .collection('cart')
+        .doc(productId);
+  }
+
+  // =========================================================
+  // ADD PRODUCT TO CART
+  // =========================================================
+
+  Future<void> _addToCart(
+    BuildContext context,
+    String productId,
+  ) async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Please log in to add products to your cart.",
+          ),
+        ),
+      );
+
+      return;
+    }
+
+    if (productId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Unable to identify this product.",
+          ),
+        ),
+      );
+
+      return;
+    }
+
+    final cartRef =
+        _cartReference(
+      user.uid,
+      productId,
+    );
+
+    try {
+      await cartRef.set(
+        {
+          // ---------------------------------------------------
+          // PRODUCT INFORMATION
+          // ---------------------------------------------------
+
+          'productId': productId,
+
+          'title':
+              product["title"] ?? "",
+
+          'description':
+              product["description"] ?? "",
+
+          'price':
+              product["price"] ?? "0",
+
+          'imageUrl':
+              product["imageUrl"] ??
+                  product["image"] ??
+                  "",
+
+          // ---------------------------------------------------
+          // SELLER INFORMATION
+          // ---------------------------------------------------
+
+          'sellerName':
+              product["sellerName"] ??
+                  "Local Artisan",
+
+          'sellerId':
+              product["sellerId"] ?? "",
+
+          // ---------------------------------------------------
+          // CART INFORMATION
+          // ---------------------------------------------------
+
+          'quantity': 1,
+
+          'addedAt':
+              FieldValue.serverTimestamp(),
+        },
+        SetOptions(
+          merge: true,
+        ),
+      );
+
+      // No generic "added to cart" dialog.
+      // The button itself changes into the quantity controller.
+    } catch (e) {
+      if (!context.mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Could not add to cart: $e",
+          ),
+        ),
+      );
+    }
+  }
+
+  // =========================================================
+  // CHANGE QUANTITY
+  // =========================================================
+
+  Future<void> _changeQuantity(
+    String productId,
+    int currentQuantity,
+    int change,
+  ) async {
+    final user =
+        FirebaseAuth.instance.currentUser;
+
+    if (user == null || productId.isEmpty) {
+      return;
+    }
+
+    final newQuantity =
+        currentQuantity + change;
+
+    final cartRef =
+        _cartReference(
+      user.uid,
+      productId,
+    );
+
+    try {
+      // -------------------------------------------------------
+      // REMOVE ITEM IF QUANTITY BECOMES ZERO
+      // -------------------------------------------------------
+
+      if (newQuantity <= 0) {
+        await cartRef.delete();
+        return;
+      }
+
+      // -------------------------------------------------------
+      // UPDATE QUANTITY
+      // -------------------------------------------------------
+
+      await cartRef.update({
+        'quantity': newQuantity,
+      });
+    } catch (e) {
+      debugPrint(
+        "Cart quantity update failed: $e",
+      );
+    }
+  }
+
+  // =========================================================
+  // CART ICON
+  // =========================================================
+
+  Widget _buildCartIcon(
+    BuildContext context,
+  ) {
+    final user =
+        FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      return IconButton(
+        icon: const Icon(
+          Icons.shopping_cart_outlined,
+          color: Colors.white,
+        ),
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) =>
+                  const AddToCartPage(),
+            ),
+          );
+        },
+      );
+    }
+
+    final cartStream =
+        FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('cart')
+            .snapshots();
+
+    return StreamBuilder<
+        QuerySnapshot<Map<String, dynamic>>>(
+      stream: cartStream,
+
+      builder: (
+        context,
+        snapshot,
+      ) {
+        int totalQuantity = 0;
+
+        if (snapshot.hasData) {
+          for (final doc
+              in snapshot.data!.docs) {
+            final data = doc.data();
+
+            final quantity =
+                data['quantity'];
+
+            if (quantity is int) {
+              totalQuantity += quantity;
+            } else if (quantity is num) {
+              totalQuantity +=
+                  quantity.toInt();
+            }
+          }
+        }
+
+        return IconButton(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    const AddToCartPage(),
+              ),
+            );
+          },
+
+          icon: Stack(
+            clipBehavior:
+                Clip.none,
+
+            children: [
+              const Icon(
+                Icons.shopping_cart_outlined,
+                color: Colors.white,
+                size: 27,
+              ),
+
+              // ------------------------------------------------
+              // CART BADGE
+              // ------------------------------------------------
+
+              if (totalQuantity > 0)
+                Positioned(
+                  right: -7,
+                  top: -8,
+
+                  child: Container(
+                    constraints:
+                        const BoxConstraints(
+                      minWidth: 18,
+                      minHeight: 18,
+                    ),
+
+                    padding:
+                        const EdgeInsets
+                            .symmetric(
+                      horizontal: 4,
+                    ),
+
+                    decoration:
+                        const BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+
+                    child: Center(
+                      child: Text(
+                        totalQuantity > 99
+                            ? "99+"
+                            : totalQuantity
+                                .toString(),
+
+                        style:
+                            const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight:
+                              FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // =========================================================
+  // QUANTITY BUTTON
+  // =========================================================
+
+  Widget _buildQuantityButton(
+    BuildContext context,
+    String productId,
+    int quantity,
+  ) {
+    return Container(
+      height: 48,
+
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: const Color(0xFF8D5314),
+          width: 1.3,
+        ),
+
+        borderRadius:
+            BorderRadius.circular(12),
+
+        color: Colors.white,
+      ),
+
+      child: Row(
+        children: [
+          // ===================================================
+          // MINUS
+          // ===================================================
+
+          Expanded(
+            child: Material(
+              color: Colors.transparent,
+
+              child: InkWell(
+                borderRadius:
+                    const BorderRadius
+                        .horizontal(
+                  left: Radius.circular(12),
+                ),
+
+                onTap: () {
+                  _changeQuantity(
+                    productId,
+                    quantity,
+                    -1,
+                  );
+                },
+
+                child: const Center(
+                  child: Icon(
+                    Icons.remove,
+                    color:
+                        Color(0xFF8D5314),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ===================================================
+          // QUANTITY
+          // ===================================================
+
+          Container(
+            width: 55,
+
+            decoration: const BoxDecoration(
+              border: Border.symmetric(
+                vertical: BorderSide(
+                  color:
+                      Color(0xFFE4CDB9),
+                ),
+              ),
+            ),
+
+            child: Center(
+              child: Text(
+                quantity.toString(),
+
+                style:
+                    const TextStyle(
+                  fontSize: 17,
+                  fontWeight:
+                      FontWeight.w700,
+                  color:
+                      Color(0xFF8D5314),
+                ),
+              ),
+            ),
+          ),
+
+          // ===================================================
+          // PLUS
+          // ===================================================
+
+          Expanded(
+            child: Material(
+              color: Colors.transparent,
+
+              child: InkWell(
+                borderRadius:
+                    const BorderRadius
+                        .horizontal(
+                  right: Radius.circular(12),
+                ),
+
+                onTap: () {
+                  _changeQuantity(
+                    productId,
+                    quantity,
+                    1,
+                  );
+                },
+
+                child: const Center(
+                  child: Icon(
+                    Icons.add,
+                    color:
+                        Color(0xFF8D5314),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =========================================================
+  // ADD / QUANTITY SECTION
+  // =========================================================
+
+  Widget _buildCartAction(
+    BuildContext context,
+    String productId,
+  ) {
+    final user =
+        FirebaseAuth.instance.currentUser;
+
+    // ---------------------------------------------------------
+    // NOT LOGGED IN
+    // ---------------------------------------------------------
+
+    if (user == null) {
+      return SizedBox(
+        height: 48,
+        child: OutlinedButton(
+          onPressed: () {
+            _addToCart(
+              context,
+              productId,
+            );
+          },
+
+          style:
+              OutlinedButton.styleFrom(
+            foregroundColor:
+                const Color(0xFF8D5314),
+
+            side:
+                const BorderSide(
+              color: Color(0xFF8D5314),
+            ),
+
+            shape:
+                RoundedRectangleBorder(
+              borderRadius:
+                  BorderRadius.circular(12),
+            ),
+          ),
+
+          child:
+              const Text(
+            "Add to Cart",
+            style: TextStyle(
+              fontWeight:
+                  FontWeight.w600,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // ---------------------------------------------------------
+    // LISTEN TO THIS PRODUCT'S CART ITEM
+    // ---------------------------------------------------------
+
+    final cartRef =
+        _cartReference(
+      user.uid,
+      productId,
+    );
+
+    return StreamBuilder<
+        DocumentSnapshot<Map<String, dynamic>>>(
+      stream: cartRef.snapshots(),
+
+      builder: (
+        context,
+        snapshot,
+      ) {
+        // -----------------------------------------------------
+        // LOADING
+        // -----------------------------------------------------
+
+        if (snapshot.connectionState ==
+                ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return SizedBox(
+            height: 48,
+            child: OutlinedButton(
+              onPressed: null,
+              style:
+                  OutlinedButton.styleFrom(
+                side:
+                    const BorderSide(
+                  color:
+                      Color(0xFFE4CDB9),
+                ),
+                shape:
+                    RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(
+                    12,
+                  ),
+                ),
+              ),
+              child:
+                  const SizedBox(
+                width: 20,
+                height: 20,
+                child:
+                    CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color:
+                      Color(0xFFD66A16),
+                ),
+              ),
+            ),
+          );
+        }
+
+        // -----------------------------------------------------
+        // GET QUANTITY
+        // -----------------------------------------------------
+
+        int quantity = 0;
+
+        if (snapshot.hasData &&
+            snapshot.data!.exists) {
+          final data =
+              snapshot.data!.data();
+
+          final rawQuantity =
+              data?['quantity'];
+
+          if (rawQuantity is int) {
+            quantity = rawQuantity;
+          } else if (rawQuantity is num) {
+            quantity =
+                rawQuantity.toInt();
+          }
+        }
+
+        // -----------------------------------------------------
+        // PRODUCT NOT IN CART
+        // -----------------------------------------------------
+
+        if (quantity <= 0) {
+          return SizedBox(
+            height: 48,
+
+            child: OutlinedButton(
+              onPressed: () {
+                _addToCart(
+                  context,
+                  productId,
+                );
+              },
+
+              style:
+                  OutlinedButton.styleFrom(
+                foregroundColor:
+                    const Color(
+                  0xFF8D5314,
+                ),
+
+                side:
+                    const BorderSide(
+                  color:
+                      Color(0xFF8D5314),
+                ),
+
+                shape:
+                    RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.circular(
+                    12,
+                  ),
+                ),
+              ),
+
+              child:
+                  const Text(
+                "Add to Cart",
+                style: TextStyle(
+                  fontWeight:
+                      FontWeight.w600,
+                ),
+              ),
+            ),
+          );
+        }
+
+        // -----------------------------------------------------
+        // PRODUCT ALREADY IN CART
+        // -----------------------------------------------------
+
+        return _buildQuantityButton(
+          context,
+          productId,
+          quantity,
+        );
+      },
+    );
+  }
+
+  // =========================================================
+  // BUILD
+  // =========================================================
+
   @override
   Widget build(BuildContext context) {
     // =========================================================
     // PRODUCT DATA
     // =========================================================
+
+    final productId =
+        product["productId"] ?? "";
 
     final productTitle =
         product["title"] ?? "";
@@ -223,27 +852,27 @@ class ProductDetailPage extends StatelessWidget {
     final productPrice =
         product["price"] ?? "0";
 
-    // ---------------------------------------------------------
-    // IMAGE
-    // ---------------------------------------------------------
-
     final imagePath =
         product["imageUrl"] ??
-        product["image"] ??
-        "";
+            product["image"] ??
+            "";
 
     final cleanImage =
-        imagePath.replaceAll('"', '').trim();
+        imagePath
+            .replaceAll('"', '')
+            .trim();
 
-    // ---------------------------------------------------------
+    // =========================================================
     // SELLER
-    // ---------------------------------------------------------
+    // =========================================================
 
     final rawSellerName =
         product["sellerName"] ?? "";
 
     final sellerName =
-        rawSellerName.trim().isNotEmpty
+        rawSellerName
+                .trim()
+                .isNotEmpty
             ? rawSellerName.trim()
             : "Local Artisan";
 
@@ -261,20 +890,38 @@ class ProductDetailPage extends StatelessWidget {
         title: Text(
           productTitle,
           maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+          overflow:
+              TextOverflow.ellipsis,
 
-          style: const TextStyle(
+          style:
+              const TextStyle(
             color: Colors.white,
-            fontWeight: FontWeight.w600,
+            fontWeight:
+                FontWeight.w600,
           ),
         ),
 
         backgroundColor:
             const Color(0xFFD66A16),
 
-        iconTheme: const IconThemeData(
+        iconTheme:
+            const IconThemeData(
           color: Colors.white,
         ),
+
+        actions: [
+          // ===================================================
+          // CART
+          // ===================================================
+
+          _buildCartIcon(
+            context,
+          ),
+
+          const SizedBox(
+            width: 6,
+          ),
+        ],
       ),
 
       // =======================================================
@@ -297,7 +944,8 @@ class ProductDetailPage extends StatelessWidget {
           // =====================================================
 
           Expanded(
-            child: SingleChildScrollView(
+            child:
+                SingleChildScrollView(
               physics:
                   const BouncingScrollPhysics(),
 
@@ -314,9 +962,9 @@ class ProductDetailPage extends StatelessWidget {
                     CrossAxisAlignment.start,
 
                 children: [
-                  // -------------------------------------------------
+                  // =============================================
                   // PRODUCT NAME
-                  // -------------------------------------------------
+                  // =============================================
 
                   Text(
                     productTitle,
@@ -335,9 +983,9 @@ class ProductDetailPage extends StatelessWidget {
                     height: 10,
                   ),
 
-                  // -------------------------------------------------
+                  // =============================================
                   // PRICE
-                  // -------------------------------------------------
+                  // =============================================
 
                   Text(
                     '₹$productPrice',
@@ -356,9 +1004,9 @@ class ProductDetailPage extends StatelessWidget {
                     height: 18,
                   ),
 
-                  // -------------------------------------------------
+                  // =============================================
                   // DESCRIPTION
-                  // -------------------------------------------------
+                  // =============================================
 
                   const Text(
                     "About this product",
@@ -391,9 +1039,9 @@ class ProductDetailPage extends StatelessWidget {
                     height: 20,
                   ),
 
-                  // -------------------------------------------------
+                  // =============================================
                   // SELLER
-                  // -------------------------------------------------
+                  // =============================================
 
                   Container(
                     padding:
@@ -506,9 +1154,9 @@ class ProductDetailPage extends StatelessWidget {
                     height: 24,
                   ),
 
-                  // -------------------------------------------------
+                  // =============================================
                   // ITEM DETAILS
-                  // -------------------------------------------------
+                  // =============================================
 
                   const Text(
                     "Item Details",
@@ -553,9 +1201,9 @@ class ProductDetailPage extends StatelessWidget {
             ),
           ),
 
-          // =======================================================
+          // =====================================================
           // BOTTOM ACTIONS
-          // =======================================================
+          // =====================================================
 
           Container(
             padding:
@@ -573,9 +1221,8 @@ class ProductDetailPage extends StatelessWidget {
               boxShadow: [
                 BoxShadow(
                   color:
-                      Colors.black.withOpacity(
-                    0.08,
-                  ),
+                      Colors.black
+                          .withOpacity(0.08),
                   blurRadius: 15,
                   offset:
                       const Offset(
@@ -589,57 +1236,14 @@ class ProductDetailPage extends StatelessWidget {
             child: Row(
               children: [
                 // =================================================
-                // ADD TO CART
+                // ADD TO CART / QUANTITY
                 // =================================================
 
                 Expanded(
                   child:
-                      OutlinedButton(
-                    onPressed: () {
-                      // TODO:
-                      // Add product to cart.
-                    },
-
-                    style:
-                        OutlinedButton.styleFrom(
-                      foregroundColor:
-                          const Color(
-                        0xFF8D5314,
-                      ),
-
-                      side:
-                          const BorderSide(
-                        color:
-                            Color(
-                          0xFF8D5314,
-                        ),
-                      ),
-
-                      padding:
-                          const EdgeInsets
-                              .symmetric(
-                        vertical: 14,
-                      ),
-
-                      shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(
-                          12,
-                        ),
-                      ),
-                    ),
-
-                    child:
-                        const Text(
-                      "Add to Cart",
-
-                      style:
-                          TextStyle(
-                        fontWeight:
-                            FontWeight.w600,
-                      ),
-                    ),
+                      _buildCartAction(
+                    context,
+                    productId,
                   ),
                 ),
 
@@ -653,67 +1257,68 @@ class ProductDetailPage extends StatelessWidget {
 
                 Expanded(
                   child:
-                      ElevatedButton(
-                    onPressed: () {
-                      Navigator.of(
-                        context,
-                      ).push(
-                        MaterialPageRoute(
-                          builder:
-                              (context) =>
-                                  BuyPage(
-                            productName:
-                                productTitle,
-
-                            productPrice:
-                                productPrice,
-
-                            productImage:
-                                cleanImage,
-
-                            sellerName:
-                                sellerName,
-
-                            sellerId:
-                                sellerId,
-                          ),
-                        ),
-                      );
-                    },
-
-                    style:
-                        ElevatedButton.styleFrom(
-                      backgroundColor:
-                          const Color(
-                        0xFF8D5314,
-                      ),
-
-                      foregroundColor:
-                          Colors.white,
-
-                      padding:
-                          const EdgeInsets
-                              .symmetric(
-                        vertical: 14,
-                      ),
-
-                      shape:
-                          RoundedRectangleBorder(
-                        borderRadius:
-                            BorderRadius.circular(
-                          12,
-                        ),
-                      ),
-                    ),
+                      SizedBox(
+                    height: 48,
 
                     child:
-                        const Text(
-                      "Buy Now",
+                        ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(
+                          context,
+                        ).push(
+                          MaterialPageRoute(
+                            builder:
+                                (context) =>
+                                    BuyPage(
+                              productName:
+                                  productTitle,
+
+                              productPrice:
+                                  productPrice,
+
+                              productImage:
+                                  cleanImage,
+
+                              sellerName:
+                                  sellerName,
+
+                              sellerId:
+                                  sellerId,
+                            ),
+                          ),
+                        );
+                      },
 
                       style:
-                          TextStyle(
-                        fontWeight:
-                            FontWeight.w700,
+                          ElevatedButton
+                              .styleFrom(
+                        backgroundColor:
+                            const Color(
+                          0xFF8D5314,
+                        ),
+
+                        foregroundColor:
+                            Colors.white,
+
+                        shape:
+                            RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius
+                                  .circular(
+                            12,
+                          ),
+                        ),
+                      ),
+
+                      child:
+                          const Text(
+                        "Buy Now",
+
+                        style:
+                            TextStyle(
+                          fontWeight:
+                              FontWeight.w700,
+                        ),
                       ),
                     ),
                   ),
