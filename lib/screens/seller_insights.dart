@@ -2884,6 +2884,8 @@ class _ActionWorkspaceSheet extends StatefulWidget {
 }
 
 class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
+
+  
   int _campaignTab = 0; 
 
  // Product selected in the Create Campaign tab.
@@ -2904,6 +2906,7 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
   final List<_DraftCampaign> _campaigns = [];
   _DraftCampaign? _campaignPreview;
 
+  
 
   // =============================================================
   // INIT STATE
@@ -4520,7 +4523,7 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
   // APPROVE & SAVE CAMPAIGN
   // =============================================================
 
-  Future<void> _approveCampaign() async {
+ Future<void> _approveCampaign() async {
   final preview = _campaignPreview;
 
   if (preview == null) {
@@ -4549,18 +4552,13 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
   }
 
   // -------------------------------------------------------------
-  // SHOW LOADING STATE
+  // SAVE CAMPAIGN
   // -------------------------------------------------------------
 
   try {
-    // -----------------------------------------------------------
-    // SAVE CAMPAIGN TO FIRESTORE
-    // -----------------------------------------------------------
-
-    final campaignRef =
-        await FirebaseFirestore.instance
-            .collection('campaigns')
-            .add({
+    final campaignRef = await FirebaseFirestore.instance
+        .collection('campaigns')
+        .add({
       // Campaign information
       'name': preview.name,
       'message': preview.message,
@@ -4575,7 +4573,6 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
       'sellerId': preview.sellerId.isNotEmpty
           ? preview.sellerId
           : user.uid,
-
       'sellerName': preview.sellerName,
 
       // Campaign state
@@ -4590,16 +4587,15 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
       'updatedAt': FieldValue.serverTimestamp(),
     });
 
-    // -----------------------------------------------------------
-    // IMPORTANT:
-    // Store Firestore document ID in our local campaign object.
-    // -----------------------------------------------------------
+    // -------------------------------------------------------------
+    // SAVE FIRESTORE DOCUMENT ID
+    // -------------------------------------------------------------
 
     preview.firestoreId = campaignRef.id;
 
-    // -----------------------------------------------------------
+    // -------------------------------------------------------------
     // UPDATE LOCAL STATE
-    // -----------------------------------------------------------
+    // -------------------------------------------------------------
 
     if (!mounted) return;
 
@@ -4611,7 +4607,7 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
 
       _campaignPreview = null;
 
-      // Reset create form
+      // Reset form
       _selectedCreateProduct = null;
       _selectedGenerateProduct = null;
 
@@ -4620,25 +4616,17 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
       _campaignDiscountController.clear();
     });
 
-    // -----------------------------------------------------------
-    // SHOW SUCCESS MESSAGE
-    // -----------------------------------------------------------
+    // -------------------------------------------------------------
+    // SHOW SUCCESS DIALOG
+    // -------------------------------------------------------------
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Campaign saved successfully.',
-          ),
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-        ),
-      );
+    await _showCampaignApprovedDialog();
 
-    // -----------------------------------------------------------
-    // MOVE TO SAVED TAB
-    // -----------------------------------------------------------
+    // -------------------------------------------------------------
+    // AFTER DIALOG CLOSES → GO TO SAVED TAB
+    // -------------------------------------------------------------
+
+    if (!mounted) return;
 
     setState(() {
       _campaignTab = 2;
@@ -4657,6 +4645,47 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
         ),
       );
   }
+}
+
+
+//APPROVE DIALOG BOX
+
+Future<void> _showCampaignApprovedDialog() async {
+  await showGeneralDialog(
+    context: context,
+    barrierDismissible: false,
+    barrierLabel: 'Campaign approved',
+    barrierColor: Colors.black.withOpacity(0.55),
+    transitionDuration: const Duration(
+      milliseconds: 350,
+    ),
+    pageBuilder: (
+      context,
+      animation,
+      secondaryAnimation,
+    ) {
+      return const SizedBox.shrink();
+    },
+    transitionBuilder: (
+      context,
+      animation,
+      secondaryAnimation,
+      child,
+    ) {
+      return Center(
+        child: ScaleTransition(
+          scale: CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutBack,
+          ),
+          child: FadeTransition(
+            opacity: animation,
+            child: const _CampaignApprovedDialogContent(),
+          ),
+        ),
+      );
+    },
+  );
 }
   //=========================================
   // INPUT FIELD
@@ -5443,6 +5472,8 @@ Future<void> _toggleCampaign(
   }
 }
 
+
+
 class _DraftCampaign {
   // Firestore document ID
   String firestoreId;
@@ -5488,3 +5519,322 @@ class _DraftCampaign {
     required this.generated,
   });
 }
+
+class _CampaignApprovedDialogContent extends StatefulWidget {
+  const _CampaignApprovedDialogContent();
+
+  @override
+  State<_CampaignApprovedDialogContent> createState() =>
+      _CampaignApprovedDialogContentState();
+}
+
+class _CampaignApprovedDialogContentState
+    extends State<_CampaignApprovedDialogContent>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  late final Animation<double> _circleAnimation;
+  late final Animation<double> _checkAnimation;
+  late final Animation<double> _textAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+
+    _circleAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOutBack,
+    );
+
+    _checkAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(
+        0.25,
+        0.70,
+        curve: Curves.easeOut,
+      ),
+    );
+
+    _textAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(
+        0.45,
+        1.0,
+        curve: Curves.easeOut,
+      ),
+    );
+
+    _controller.forward();
+
+    // Automatically close the dialog after 2.5 seconds.
+    Future.delayed(
+      const Duration(milliseconds: 2500),
+      () {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: 330,
+        padding: const EdgeInsets.symmetric(
+          horizontal: 28,
+          vertical: 32,
+        ),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.18),
+              blurRadius: 35,
+              offset: const Offset(0, 16),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // =====================================================
+            // ANIMATED CHECK CIRCLE
+            // =====================================================
+
+            ScaleTransition(
+              scale: _circleAnimation,
+              child: Container(
+                width: 82,
+                height: 82,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color(0xFF6657E8),
+                      Color(0xFF8B5CF6),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF6657E8)
+                          .withOpacity(0.28),
+                      blurRadius: 22,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: AnimatedBuilder(
+                  animation: _checkAnimation,
+                  builder: (context, child) {
+                    return CustomPaint(
+                      painter: _CheckPainter(
+                        progress: _checkAnimation.value,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // =====================================================
+            // SUCCESS TEXT
+            // =====================================================
+
+            FadeTransition(
+              opacity: _textAnimation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.15),
+                  end: Offset.zero,
+                ).animate(_textAnimation),
+                child: Column(
+                  children: [
+                    const Text(
+                      'Campaign Approved!',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 21,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF171A2A),
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    Text(
+                      'Your campaign has been saved successfully.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.45,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // =================================================
+                    // SAVED BADGE
+                    // =================================================
+
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 13,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3F1FF),
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.check_circle_rounded,
+                            size: 16,
+                            color: Color(0xFF6657E8),
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            'Saved',
+                            style: TextStyle(
+                              color: Color(0xFF6657E8),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ===============================================================
+// ANIMATED CHECK MARK
+// ===============================================================
+
+class _CheckPainter extends CustomPainter {
+  final double progress;
+
+  _CheckPainter({
+    required this.progress,
+  });
+
+  @override
+  void paint(
+    Canvas canvas,
+    Size size,
+  ) {
+    final paint = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 5
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+
+    final start = Offset(
+      size.width * 0.28,
+      size.height * 0.52,
+    );
+
+    final middle = Offset(
+      size.width * 0.44,
+      size.height * 0.67,
+    );
+
+    final end = Offset(
+      size.width * 0.73,
+      size.height * 0.36,
+    );
+
+    final path = Path();
+
+    if (progress <= 0.5) {
+      final firstProgress = progress / 0.5;
+
+      final current = Offset(
+        start.dx +
+            (middle.dx - start.dx) * firstProgress,
+        start.dy +
+            (middle.dy - start.dy) * firstProgress,
+      );
+
+      path.moveTo(
+        start.dx,
+        start.dy,
+      );
+
+      path.lineTo(
+        current.dx,
+        current.dy,
+      );
+    } else {
+      path.moveTo(
+        start.dx,
+        start.dy,
+      );
+
+      path.lineTo(
+        middle.dx,
+        middle.dy,
+      );
+
+      final secondProgress =
+          (progress - 0.5) / 0.5;
+
+      final current = Offset(
+        middle.dx +
+            (end.dx - middle.dx) * secondProgress,
+        middle.dy +
+            (end.dy - middle.dy) * secondProgress,
+      );
+
+      path.lineTo(
+        current.dx,
+        current.dy,
+      );
+    }
+
+    canvas.drawPath(
+      path,
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(
+    covariant _CheckPainter oldDelegate,
+  ) {
+    return oldDelegate.progress != progress;
+  }
+}
+
