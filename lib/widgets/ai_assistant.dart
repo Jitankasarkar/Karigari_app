@@ -1,48 +1,98 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
 import 'package:proto_app/product_detail_page.dart';
+import 'package:proto_app/add_to_cart_page.dart';
+
 import '../services/llama_service.dart';
 
 class AIAssistant extends StatefulWidget {
-  const AIAssistant({super.key});
+  const AIAssistant({
+    super.key,
+  });
 
   @override
-  State<AIAssistant> createState() => _AIAssistantState();
+  State<AIAssistant> createState() =>
+      _AIAssistantState();
 }
 
-class _AIAssistantState extends State<AIAssistant> {
-  final TextEditingController _controller = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
-  final FocusNode _inputFocusNode = FocusNode();
+class _AIAssistantState
+    extends State<AIAssistant> {
+  // ============================================================
+  // CONTROLLERS
+  // ============================================================
 
-  final List<_ChatMessage> _messages = [];
-  final List<Map<String, String>> _conversation = [];
+  final TextEditingController _controller =
+      TextEditingController();
+
+  final ScrollController _scrollController =
+      ScrollController();
+
+  final FocusNode _inputFocusNode =
+      FocusNode();
+
+  // ============================================================
+  // FIRESTORE
+  // ============================================================
+
+  final FirebaseFirestore _firestore =
+      FirebaseFirestore.instance;
+
+  // ============================================================
+  // CHAT
+  // ============================================================
+
+  final List<_ChatMessage> _messages =
+      <_ChatMessage>[];
+
+  final List<Map<String, String>>
+      _conversation =
+      <Map<String, String>>[];
 
   bool _isTyping = false;
 
-  List<Map<String, dynamic>> _recommendedProducts = [];
+  // ============================================================
+  // SHOPPING MEMORY
+  // ============================================================
 
-  /// The last useful shopping intent.
-  ///
-  /// This is deliberately kept separately from the current user message so
-  /// follow-ups such as:
-  ///   "show me bangles" -> "in red" -> "under 2000"
-  /// can continue the same search.
   Map<String, dynamic>? _lastIntent;
 
-  /// Product ids already shown in the current search flow.
-  /// Used by "more" so the assistant does not repeat the same products.
-  final Set<String> _shownProductIds = <String>{};
+  /// Products currently displayed to the customer.
+  List<Map<String, dynamic>>
+      _shownProducts =
+      <Map<String, dynamic>>[];
 
-  /// Whether the previous assistant turn was waiting for the user to answer
-  /// a clarification question.
-  bool _waitingForClarification = false;
+  /// Products selected by the customer
+  /// and waiting for cart confirmation.
+  List<Map<String, dynamic>>
+      _pendingCartProducts =
+      <Map<String, dynamic>>[];
 
-  // -------------------------------------------------------------------------
-  // BASIC ALIASES
-  // -------------------------------------------------------------------------
+  /// Waiting for:
+  ///
+  /// "yes"
+  /// "yes add it"
+  /// "no"
+  ///
+  bool _awaitingCartConfirmation =
+      false;
 
-  static const Map<String, List<String>> _categoryAliases = {
+  /// Waiting for the customer to identify
+  /// a product from the displayed products.
+  bool _awaitingProductSelection =
+      false;
+
+  /// Products already shown in the current search.
+  final Set<String> _shownProductIds =
+      <String>{};
+
+  // ============================================================
+  // ALIASES
+  // ============================================================
+
+  static const Map<String, List<String>>
+      _categoryAliases = {
     'Jewellery': [
       'jewellery',
       'jewelry',
@@ -50,17 +100,6 @@ class _AIAssistantState extends State<AIAssistant> {
       'jewels',
       'ornament',
       'ornaments',
-      'accessory',
-      'accessories',
-    ],
-    'Clothing': [
-      'clothing',
-      'clothes',
-      'apparel',
-      'outfit',
-      'outfits',
-      'wear',
-      'fashion',
     ],
     'Home Decor': [
       'home decor',
@@ -69,15 +108,6 @@ class _AIAssistantState extends State<AIAssistant> {
       'decor',
       'decoration',
       'house decor',
-      'home accessories',
-    ],
-    'Handicrafts': [
-      'handicraft',
-      'handicrafts',
-      'craft',
-      'crafts',
-      'handmade crafts',
-      'artisan crafts',
     ],
     'Kitchenware': [
       'kitchenware',
@@ -86,10 +116,13 @@ class _AIAssistantState extends State<AIAssistant> {
       'utensils',
       'cookware',
     ],
-    'Pottery': [
-      'pottery',
-      'ceramic',
-      'ceramics',
+    'Clothing': [
+      'clothing',
+      'clothes',
+      'apparel',
+      'outfit',
+      'outfits',
+      'fashion',
     ],
     'Bags': [
       'bag',
@@ -100,13 +133,21 @@ class _AIAssistantState extends State<AIAssistant> {
       'purses',
       'tote',
     ],
-    'Home & Kitchen': [
-      'home and kitchen',
-      'home kitchen',
+    'Pottery': [
+      'pottery',
+      'ceramic',
+      'ceramics',
+    ],
+    'Handicrafts': [
+      'handicraft',
+      'handicrafts',
+      'craft',
+      'crafts',
     ],
   };
 
-  static const Map<String, List<String>> _productTypeAliases = {
+  static const Map<String, List<String>>
+      _productTypeAliases = {
     'Bangles': [
       'bangle',
       'bangles',
@@ -181,8 +222,8 @@ class _AIAssistantState extends State<AIAssistant> {
     'Clay Pot': [
       'clay pot',
       'clay pots',
-      'pot',
-      'pots',
+      'terracotta pot',
+      'terracotta pots',
     ],
     'Candle Holder': [
       'candle holder',
@@ -209,85 +250,58 @@ class _AIAssistantState extends State<AIAssistant> {
     ],
   };
 
-  static const Map<String, List<String>> _occasionAliases = {
-    'wedding': [
-      'wedding',
-      'weddings',
-      'bridal',
-      'bride',
-      'marriage',
-      'shaadi',
+  static const Map<String, List<String>>
+      _materialAliases = {
+    'terracotta': [
+      'terracotta',
+      'terracotta clay',
     ],
-    'festival': [
-      'festival',
-      'festivals',
-      'festive',
-      'festivity',
-      'celebration',
-      'celebrations',
+    'clay': [
+      'clay',
     ],
-    'everyday': [
-      'everyday',
-      'daily',
-      'daily use',
-      'daily wear',
-      'regular wear',
-      'casual',
+    'cotton': [
+      'cotton',
+      'cotton thread',
     ],
-    'birthday': [
-      'birthday',
-      'birthdays',
+    'silk': [
+      'silk',
+      'silk thread',
     ],
-    'housewarming': [
-      'housewarming',
-      'house warming',
+    'bamboo': [
+      'bamboo',
     ],
-    'gift': [
-      'gift',
-      'gifts',
-      'present',
-      'presents',
+    'wood': [
+      'wood',
+      'wooden',
     ],
-  };
-
-  static const Map<String, List<String>> _attributeAliases = {
-    'handmade': [
-      'handmade',
-      'hand made',
-      'handcrafted',
-      'hand crafted',
-      'artisan',
-      'artisan-made',
-      'artisan made',
-      'locally made',
-      'crafted',
+    'jute': [
+      'jute',
     ],
-    'traditional': [
-      'traditional',
-      'ethnic',
-      'heritage',
-      'classic',
+    'ceramic': [
+      'ceramic',
+      'ceramics',
     ],
-    'modern': [
-      'modern',
-      'contemporary',
-      'trendy',
-      'stylish',
-      'fashionable',
+    'wool': [
+      'wool',
     ],
-    'rustic': [
-      'rustic',
-      'earthy',
+    'brass': [
+      'brass',
     ],
-    'eco-friendly': [
-      'eco-friendly',
-      'eco friendly',
-      'sustainable',
-      'environment friendly',
+    'metal': [
+      'metal',
+    ],
+    'beads': [
+      'bead',
+      'beads',
+      'beaded',
+    ],
+    'glass': [
+      'glass',
     ],
   };
 
-  static const List<String> _commonColours = [
+  static const List<String>
+      _colours = [
     'red',
     'blue',
     'green',
@@ -305,28 +319,11 @@ class _AIAssistantState extends State<AIAssistant> {
     'maroon',
     'multicolour',
     'multicolor',
-    'earthy',
   ];
 
-  static const Map<String, List<String>> _materialAliases = {
-    'terracotta': ['terracotta', 'terracotta clay'],
-    'clay': ['clay'],
-    'cotton': ['cotton', 'cotton thread'],
-    'silk': ['silk', 'silk thread'],
-    'bamboo': ['bamboo'],
-    'wood': ['wood', 'wooden'],
-    'jute': ['jute'],
-    'ceramic': ['ceramic', 'ceramics'],
-    'wool': ['wool'],
-    'brass': ['brass'],
-    'metal': ['metal'],
-    'beads': ['bead', 'beads', 'beaded'],
-    'glass': ['glass'],
-  };
-
-  // -------------------------------------------------------------------------
-  // LIFECYCLE
-  // -------------------------------------------------------------------------
+  // ============================================================
+  // INIT
+  // ============================================================
 
   @override
   void initState() {
@@ -335,7 +332,7 @@ class _AIAssistantState extends State<AIAssistant> {
     _messages.add(
       const _ChatMessage(
         text:
-            "Hi! I'm your Karigari shopping assistant. What handmade products are you looking for?",
+            "Hi! 👋 I'm your Karigari shopping assistant. What handmade products are you looking for?",
         isUser: false,
       ),
     );
@@ -346,21 +343,54 @@ class _AIAssistantState extends State<AIAssistant> {
     _controller.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
+
     super.dispose();
   }
 
-  // -------------------------------------------------------------------------
-  // MESSAGE FLOW
-  // -------------------------------------------------------------------------
+  // ============================================================
+  // CURRENT USER
+  // ============================================================
+
+  String? get _userId {
+    return FirebaseAuth
+        .instance
+        .currentUser
+        ?.uid;
+  }
+
+  // ============================================================
+  // CART REFERENCE
+  // ============================================================
+
+  CollectionReference<Map<String, dynamic>>?
+      get _cartReference {
+    final uid = _userId;
+
+    if (uid == null || uid.isEmpty) {
+      return null;
+    }
+
+    return _firestore
+        .collection('users')
+        .doc(uid)
+        .collection('cart');
+  }
+
+  // ============================================================
+  // SEND MESSAGE
+  // ============================================================
 
   Future<void> _sendMessage() async {
-    final text = _controller.text.trim();
+    final text =
+        _controller.text.trim();
 
-    if (text.isEmpty || _isTyping) {
+    if (text.isEmpty ||
+        _isTyping) {
       return;
     }
 
-    final normalized = _normalise(text);
+    final normalized =
+        _normalise(text);
 
     setState(() {
       _messages.add(
@@ -376,576 +406,2183 @@ class _AIAssistantState extends State<AIAssistant> {
       });
 
       _controller.clear();
+
       _isTyping = true;
-      _recommendedProducts = [];
     });
 
     _scrollToBottom();
 
     try {
-      // ================================================================
-      // CASE 1: GREETING / NORMAL CHAT
-      // Do not hit Firestore or product search.
-      // ================================================================
+      // ========================================================
+      // 1. CART CONFIRMATION
+      // ========================================================
 
-      if (_isGreetingOrCasual(normalized)) {
-        await _respondWithoutSearch(
-          _casualResponse(normalized),
+      if (_awaitingCartConfirmation &&
+          _pendingCartProducts.isNotEmpty) {
+        await _handleCartConfirmation(
+          normalized,
         );
+
         return;
       }
 
-      // ================================================================
-      // CASE 10: NO
-      // If the assistant previously asked a confirmation/clarification,
-      // "no" must not trigger another product search.
-      // ================================================================
+      // ========================================================
+      // 2. PRODUCT SELECTION
+      // ========================================================
 
-      if (_isNegative(normalized)) {
-        _waitingForClarification = false;
-
-        await _respondWithoutSearch(
-          _lastIntent != null
-              ? "No problem. I won't change or show anything yet. Tell me what you'd like instead."
-              : "No problem. Tell me what handmade product you're looking for.",
-        );
-        return;
-      }
-
-      // ================================================================
-      // CASE 12: MORE
-      // Exclude products already displayed and return the next batch.
-      // ================================================================
-
-      if (_isMoreRequest(normalized)) {
-        if (_lastIntent == null) {
-          await _respondWithoutSearch(
-            "Sure — tell me what kind of handmade product you'd like me to show first.",
-          );
-          return;
-        }
-
-        final products = await _findMatchingProducts(
-          _lastIntent!,
-          excludeShown: true,
-        );
-
-        if (!mounted) return;
-
-        if (products.isEmpty) {
-          await _respondWithoutSearch(
-            "I've shown all the matching products I currently have. If you'd like, you can change a filter or ask for a different type.",
-          );
-          return;
-        }
-
-        _shownProductIds.addAll(
-          products.map(_productId),
-        );
-
-        await _showProducts(
-          products,
-          "Here are some more options without repeating the ones I just showed.",
-        );
-        return;
-      }
-
-      // ================================================================
-      // CASES 6/7/8/9:
-      // Llama understands the natural-language request, while the local
-      // merge layer controls conversational state so a follow-up cannot
-      // accidentally erase the previous search.
-      // ================================================================
-
-      Map<String, dynamic> currentIntent = {};
-
-      try {
-        currentIntent =
-            await LlamaService.understandRequest(
-          userMessage: text,
-          conversation: _conversation
-              .take(
-                _conversation.length - 1,
-              )
-              .toList(),
-          previousIntent: _lastIntent,
-        );
-      } catch (e) {
-        debugPrint(
-          'Llama intent error: $e',
-        );
-      }
-
-      // ================================================================
-      // CASE 2: VAGUE REQUEST
-      // Do not search merely because the user said "something nice",
-      // "show me something", etc.
-      // ================================================================
-
-      if (_isVagueRequest(
-        text: text,
-        intent: currentIntent,
-      )) {
-        final question =
-            _clarificationForVagueRequest(
+      if (_awaitingProductSelection &&
+          _shownProducts.isNotEmpty) {
+        final handled =
+            await _handleProductSelection(
           text,
-          currentIntent,
+          normalized,
         );
 
-        _waitingForClarification = true;
+        if (handled) {
+          return;
+        }
 
-        await _respondWithoutSearch(
-          question,
-        );
-        return;
-      }
+        // User may have abandoned the current
+        // product selection and started a new search.
+        if (_looksLikeNewShoppingRequest(
+          text,
+        )) {
+          _awaitingProductSelection =
+              false;
 
-      // ================================================================
-      // Merge deterministic information with the model's intent.
-      // ================================================================
+          _clearDisplayedProducts();
 
-      final mergedIntent = _mergeIntent(
-        previous: _lastIntent,
-        current: currentIntent,
-        userMessage: text,
-      );
-
-      debugPrint(
-        'FINAL MERGED INTENT: $mergedIntent',
-      );
-
-      // ================================================================
-      // CASE 9: YES / SHOW ME
-      // Reuse the pending previous intent rather than interpreting "yes"
-      // as a completely new search.
-      // ================================================================
-
-      if (_isConfirmation(normalized) &&
-          _lastIntent != null) {
-        mergedIntent['needsClarification'] = false;
-        mergedIntent['clarificationQuestion'] = '';
-      }
-
-      // ================================================================
-      // CASE 2 / 5:
-      // If the model still says clarification is required, ask instead
-      // of showing unrelated products.
-      // ================================================================
-
-      if (mergedIntent['needsClarification'] == true) {
-        final question =
-            mergedIntent['clarificationQuestion']
-                    ?.toString()
-                    .trim();
-
-        _waitingForClarification = true;
-
-        await _respondWithoutSearch(
-          question?.isNotEmpty == true
-              ? question!
-              : _clarificationForIntent(
-                  mergedIntent,
-                ),
-        );
-        return;
-      }
-
-      // ================================================================
-      // CASE 3/4/5/6/7/8:
-      // Search only after we have an actual product-shopping intent.
-      // ================================================================
-
-      if (!_hasUsefulSearchIntent(mergedIntent)) {
-        _waitingForClarification = true;
-
-        await _respondWithoutSearch(
-          _clarificationForVagueRequest(
+          await _processShoppingRequest(
             text,
-            mergedIntent,
-          ),
+          );
+
+          return;
+        }
+
+        await _respond(
+          "Which product would you like? "
+          "You can tell me the product name.",
         );
+
         return;
       }
 
-      _lastIntent = mergedIntent;
-      _waitingForClarification = false;
+      // ========================================================
+      // 3. RESET
+      // ========================================================
 
-      final products = await _findMatchingProducts(
-        mergedIntent,
-      );
+      if (_isResetRequest(normalized)) {
+        _resetShoppingState();
 
-      if (!mounted) return;
-
-      // ================================================================
-      // CASE 11: NO RESULTS
-      // Do not silently return random products. Explain that there is
-      // no exact match and give the user a way to broaden/change it.
-      // ================================================================
-
-      if (products.isEmpty) {
-        await _respondWithoutSearch(
-          _noResultsResponse(
-            mergedIntent,
-          ),
+        await _respond(
+          "Absolutely. Let's start fresh. What are you looking for?",
         );
+
         return;
       }
 
-      _shownProductIds.clear();
-      _shownProductIds.addAll(
-        products.map(_productId),
-      );
+      // ========================================================
+      // 4. NORMAL CONVERSATION
+      // ========================================================
 
-      String response;
-
-      try {
-        response =
-            await LlamaService.generateResponse(
-          userMessage: text,
-          products: products,
-          intent: mergedIntent,
-          conversation: _conversation,
-        );
-      } catch (e) {
-        debugPrint(
-          'Llama response generation error: $e',
+      if (_isCasualMessage(normalized)) {
+        await _handleNormalConversation(
+          text,
         );
 
-        response =
-            _fallbackResponse(
-          products,
-          mergedIntent,
-        );
+        return;
       }
 
-      if (!mounted) return;
+      // ========================================================
+      // 5. NORMAL SHOPPING REQUEST
+      // ========================================================
 
-      setState(() {
-        _isTyping = false;
-        _recommendedProducts = products;
-
-        _messages.add(
-          _ChatMessage(
-            text: response,
-            isUser: false,
-          ),
-        );
-
-        _conversation.add({
-          'role': 'assistant',
-          'text': response,
-        });
-      });
-
-      _scrollToBottom();
+      await _processShoppingRequest(
+        text,
+      );
     } catch (e, stackTrace) {
       debugPrint(
         'AI assistant error: $e',
       );
+
       debugPrint(
-        'STACK: $stackTrace',
+        stackTrace.toString(),
       );
 
       if (!mounted) return;
 
-      setState(() {
-        _isTyping = false;
-
-        _messages.add(
-          const _ChatMessage(
-            text:
-                "I'm having trouble understanding that right now. Try describing the product you want, for example: \"handmade red bangles for a wedding\".",
-            isUser: false,
-          ),
-        );
-
-        _conversation.add({
-          'role': 'assistant',
-          'text':
-              "I'm having trouble understanding that right now. Try describing the product you want, for example: \"handmade red bangles for a wedding\".",
-        });
-      });
-
-      _scrollToBottom();
+      await _respond(
+        "I'm having a little trouble understanding that right now. "
+        "Tell me what handmade product you're looking for.",
+      );
     }
   }
 
-  // -------------------------------------------------------------------------
-  // CONVERSATIONAL STATE / INTENT MERGING
-  // -------------------------------------------------------------------------
+  // ============================================================
+  // SHOPPING REQUEST
+  // ============================================================
 
-  Map<String, dynamic> _mergeIntent({
-    required Map<String, dynamic>? previous,
-    required Map<String, dynamic> current,
-    required String userMessage,
-  }) {
-    final text = _normalise(userMessage);
+  Future<void> _processShoppingRequest(
+    String text,
+  ) async {
+    Map<String, dynamic> llamaIntent = {};
 
-    // Start from the previous search so follow-ups retain context.
-    final result = <String, dynamic>{
-      ...?previous,
-    };
-
-    final isConfirmation = _isConfirmation(text);
-    final isCorrection = _isCorrection(text);
-    final isExplicitNewSearch = _isExplicitNewSearch(text);
-
-    // ---------------------------------------------------------------
-    // CASE 9: YES
-    // ---------------------------------------------------------------
-    if (isConfirmation && previous != null) {
-      return {
-        ...previous,
-        'needsClarification': false,
-        'clarificationQuestion': '',
-      };
+    try {
+      llamaIntent =
+          await LlamaService
+              .understandRequest(
+        userMessage: text,
+        conversation:
+            _conversation
+                .take(
+                  _conversation.length > 0
+                      ? _conversation.length - 1
+                      : 0,
+                )
+                .toList(),
+        previousIntent:
+            _lastIntent,
+        conversationState: {
+          'awaitingProductSelection':
+              _awaitingProductSelection,
+          'awaitingCartConfirmation':
+              _awaitingCartConfirmation,
+          'shownProductIds':
+              _shownProductIds.toList(),
+        },
+      );
+    } catch (e) {
+      debugPrint(
+        'Llama understanding error: $e',
+      );
     }
 
-    // ---------------------------------------------------------------
-    // CASE 8: CHANGE / CORRECTION
-    //
-    // "Actually show necklaces instead."
-    // "I meant earrings."
-    // "No, I want home decor."
-    //
-    // The new category/type replaces the old one.
-    // ---------------------------------------------------------------
-    if (isCorrection || isExplicitNewSearch) {
-      final detectedType =
-          _detectProductType(text);
+    // ==========================================================
+    // MERGE AI + DETERMINISTIC UNDERSTANDING
+    // ==========================================================
 
-      final detectedCategory =
-          _detectCategory(text);
+    final intent =
+        _mergeIntent(
+      previous: _lastIntent,
+      current: llamaIntent,
+      userMessage: text,
+    );
 
-      if (detectedType != null) {
-        result['productType'] = detectedType;
-      } else if (isCorrection &&
-          _mentionsDifferentProductType(
-            text,
-            previous?['productType'],
-          )) {
-        result.remove('productType');
-      }
-
-      if (detectedCategory != null) {
-        result['category'] = detectedCategory;
-      }
-
-      // A direct replacement such as "instead of red, blue" should
-      // replace the colour rather than keep both.
-      final replacementColour =
-          _detectColours(text);
-
-      if (isCorrection &&
-          replacementColour.isNotEmpty) {
-        result['colour'] = replacementColour;
-      }
-
-      final replacementMaterial =
-          _detectMaterials(text);
-
-      if (isCorrection &&
-          replacementMaterial.isNotEmpty) {
-        result['material'] =
-            replacementMaterial;
-      }
-
-      result['needsClarification'] = false;
-      result['clarificationQuestion'] = '';
-
-      return result;
-    }
-
-    // ---------------------------------------------------------------
-    // CASES 3/4/5/7:
-    // Add newly mentioned information to the previous intent.
-    // ---------------------------------------------------------------
-
-    final detectedCategory =
+    final explicitCategory =
         _detectCategory(text);
 
-    final detectedProductType =
+    final explicitType =
         _detectProductType(text);
 
-    final detectedOccasion =
-        _detectOccasion(text);
-
-    final detectedMaterials =
-        _detectMaterials(text);
-
-    final detectedColours =
-        _detectColours(text);
-
-    final detectedStyles =
-        _detectStyles(text);
-
-    final detectedKeywords =
-        _stringList(current['keywords']);
-
-    if (detectedCategory != null) {
-      result['category'] = detectedCategory;
+    if (explicitCategory != null) {
+      intent['category'] =
+          explicitCategory;
     }
 
-    if (detectedProductType != null) {
-      result['productType'] = detectedProductType;
+    if (explicitType != null) {
+      intent['productType'] =
+          explicitType;
+    }
 
-      // Product types are stronger than broad categories.
-      if (_jewelleryTypes.contains(
-        detectedProductType,
-      )) {
-        result['category'] = 'Jewellery';
+    // ==========================================================
+    // IMPORTANT:
+    //
+    // Broad category request:
+    //
+    // "show me some home decor"
+    //
+    // MUST NOT search products immediately.
+    // ==========================================================
+
+    final category =
+        intent['category']
+            ?.toString()
+            .trim();
+
+    final productType =
+        intent['productType']
+            ?.toString()
+            .trim();
+
+    final occasion =
+        _stringList(
+      intent['occasion'],
+    );
+
+    final isBroadCategoryRequest =
+        category != null &&
+        category.isNotEmpty &&
+        (productType == null ||
+            productType.isEmpty) &&
+        _hasNoSpecificAttribute(
+          intent,
+        );
+
+    final isBroadGiftRequest =
+        occasion.contains('gift') &&
+        (category == null ||
+            category.isEmpty) &&
+        (productType == null ||
+            productType.isEmpty);
+
+    if (isBroadCategoryRequest ||
+        isBroadGiftRequest) {
+      _lastIntent = intent;
+
+      await _askCatalogQuestion(
+        category:
+            isBroadCategoryRequest
+                ? category
+                : null,
+        giftRequest:
+            isBroadGiftRequest,
+      );
+
+      return;
+    }
+
+    // ==========================================================
+    // VAGUE REQUEST
+    // ==========================================================
+
+    if (!_hasUsefulSearchIntent(
+      intent,
+    )) {
+      await _askCatalogQuestion();
+
+      return;
+    }
+
+    // ==========================================================
+    // SAVE MEMORY
+    // ==========================================================
+
+    _lastIntent = intent;
+
+    // ==========================================================
+    // SEARCH FIRESTORE
+    // ==========================================================
+
+    final products =
+        await _findMatchingProducts(
+      intent,
+    );
+
+    if (!mounted) return;
+
+    // ==========================================================
+    // NO PRODUCTS
+    // ==========================================================
+
+    if (products.isEmpty) {
+      await _respond(
+        _noResultsResponse(
+          intent,
+        ),
+      );
+
+      return;
+    }
+
+    // ==========================================================
+    // SAVE DISPLAYED PRODUCTS
+    // ==========================================================
+
+    _shownProducts = products;
+
+    _shownProductIds
+      ..clear()
+      ..addAll(
+        products.map(
+          _productId,
+        ),
+      );
+
+    _awaitingProductSelection =
+        true;
+
+    // ==========================================================
+    // IMPORTANT:
+    //
+    // ONLY SAY THAT PRODUCTS WERE FOUND.
+    //
+    // DO NOT ASK TO ADD THEM TO CART.
+    // ==========================================================
+
+    final response =
+        _foundProductsResponse(
+      products,
+      intent,
+    );
+
+    await _showProducts(
+      products,
+      response,
+    );
+
+    // NO _askToAddProduct HERE.
+    //
+    // This is the key fix.
+  }
+
+  // ============================================================
+  // PRODUCT SELECTION
+  // ============================================================
+
+  Future<bool> _handleProductSelection(
+    String text,
+    String normalized,
+  ) async {
+    // ----------------------------------------------------------
+    // First try exact product-name matching.
+    // ----------------------------------------------------------
+
+    final exactMatches =
+        _productsMentionedByName(
+      text,
+    );
+
+    if (exactMatches.length == 1) {
+      await _askToAddProducts(
+        exactMatches,
+      );
+
+      return true;
+    }
+
+    if (exactMatches.length > 1) {
+      await _askToAddProducts(
+        exactMatches,
+      );
+
+      return true;
+    }
+
+    // ----------------------------------------------------------
+    // "this one", "that one", "yes this one"
+    // ----------------------------------------------------------
+
+    final refersToDisplayedProduct =
+        _refersToDisplayedProduct(
+      normalized,
+    );
+
+    if (refersToDisplayedProduct) {
+      if (_shownProducts.length == 1) {
+        await _askToAddProducts(
+          [_shownProducts.first],
+        );
+
+        return true;
       }
 
-      if (_homeDecorTypes.contains(
-        detectedProductType,
-      )) {
-        result['category'] = 'Home Decor';
-      }
+      await _respond(
+        "Sure. Which one do you mean? "
+        "Please tell me the product name.",
+      );
 
-      if (_bagTypes.contains(
-        detectedProductType,
-      )) {
-        result['category'] = 'Bags';
-      }
+      return true;
+    }
 
-      if (_clothingTypes.contains(
-        detectedProductType,
-      )) {
-        result['category'] = 'Clothing';
+    // ----------------------------------------------------------
+    // "these", "I like these", "I want to buy these"
+    // ----------------------------------------------------------
+
+    if (_refersToMultipleDisplayedProducts(
+      normalized,
+    )) {
+      if (_shownProducts.isNotEmpty) {
+        await _askToAddProducts(
+          _shownProducts,
+        );
+
+        return true;
       }
     }
 
-    if (detectedOccasion != null) {
-      result['occasion'] = detectedOccasion;
+    // ----------------------------------------------------------
+    // "I like the necklace"
+    //
+    // If exactly one displayed product matches
+    // the requested product type, select it.
+    // ----------------------------------------------------------
+
+    final requestedType =
+        _detectProductType(
+      text,
+    );
+
+    if (requestedType != null) {
+      final candidates =
+          _shownProducts.where(
+        (product) =>
+            _matchesProductType(
+          product,
+          requestedType,
+        ),
+      ).toList();
+
+      if (candidates.length == 1) {
+        await _askToAddProducts(
+          candidates,
+        );
+
+        return true;
+      }
+
+      if (candidates.length > 1) {
+        await _respond(
+          "I found several products of that type. "
+          "Which one would you like?",
+        );
+
+        return true;
+      }
     }
 
-    if (detectedMaterials.isNotEmpty) {
-      result['material'] = _mergeList(
-        _stringList(result['material']),
-        detectedMaterials,
+    return false;
+  }
+
+  // ============================================================
+  // ASK CART CONFIRMATION
+  // ============================================================
+
+  Future<void> _askToAddProducts(
+    List<Map<String, dynamic>> products,
+  ) async {
+    if (products.isEmpty) {
+      return;
+    }
+
+    _pendingCartProducts =
+        List<Map<String, dynamic>>.from(
+      products,
+    );
+
+    // The product has now been selected. The displayed recommendation cards
+    // must disappear while we wait for the cart confirmation. Otherwise the
+    // old recommendation list stays pinned below the new assistant message.
+    _clearDisplayedProducts();
+
+    _awaitingCartConfirmation =
+        true;
+
+    _awaitingProductSelection =
+        false;
+
+    if (products.length == 1) {
+      final title =
+          _productTitle(
+        products.first,
+      );
+
+      await _respond(
+        'Great choice! Would you like to add "$title" to your cart?',
+      );
+
+      return;
+    }
+
+    await _respond(
+      'Great choice! Would you like to add these ${products.length} products to your cart?',
+    );
+  }
+
+  // ============================================================
+  // CART CONFIRMATION
+  // ============================================================
+
+  Future<void> _handleCartConfirmation(
+    String normalized,
+  ) async {
+    // ==========================================================
+    // YES
+    // ==========================================================
+
+    if (_isPositive(normalized)) {
+      final products =
+          List<Map<String, dynamic>>.from(
+        _pendingCartProducts,
+      );
+
+      final success =
+          await _addProductsToCart(
+        products,
+      );
+
+      if (!mounted) return;
+
+      if (!success) {
+        return;
+      }
+
+      _pendingCartProducts.clear();
+
+      // The recommendation is finished once the product is added. Do not
+      // leave the old product card visible under the success message.
+      _clearDisplayedProducts();
+
+      _awaitingCartConfirmation =
+          false;
+
+      await _respond(
+        products.length == 1
+            ? "Product added to your cart."
+            : "Products added to your cart.",
+        showCartButton: true,
+      );
+
+      return;
+    }
+
+    // ==========================================================
+    // NO
+    // ==========================================================
+
+    if (_isNegative(normalized)) {
+      _pendingCartProducts.clear();
+
+      // User rejected the selected product, so its recommendation card is
+      // no longer relevant.
+      _clearDisplayedProducts();
+
+      _awaitingCartConfirmation =
+          false;
+
+      await _respond(
+        "Not a problem. What products are you looking for then?",
+      );
+
+      return;
+    }
+
+    // ==========================================================
+    // USER ABANDONS CURRENT PRODUCT
+    //
+    // Example:
+    //
+    // "no, show me necklaces instead"
+    // ==========================================================
+
+    if (_looksLikeNewShoppingRequest(
+      normalized,
+    )) {
+      _pendingCartProducts.clear();
+
+      // The customer has moved on to a different request. Remove the old
+      // recommendation cards before processing the new search.
+      _clearDisplayedProducts();
+
+      _awaitingCartConfirmation =
+          false;
+
+      await _processShoppingRequest(
+        normalized,
+      );
+
+      return;
+    }
+
+    // ==========================================================
+    // OTHER ANSWER
+    // ==========================================================
+
+    await _respond(
+      "Would you like me to add it to your cart?",
+    );
+  }
+
+  // ============================================================
+  // ADD PRODUCTS TO FIRESTORE CART
+  // ============================================================
+
+  Future<bool> _addProductsToCart(
+    List<Map<String, dynamic>> products,
+  ) async {
+    final cart =
+        _cartReference;
+
+    if (cart == null) {
+      await _respond(
+        "Please log in before adding products to your cart.",
+      );
+
+      return false;
+    }
+
+    try {
+      for (final product in products) {
+        await _addSingleProductToCart(
+          cart,
+          product,
+        );
+      }
+
+      return true;
+    } catch (e) {
+      debugPrint(
+        'Cart error: $e',
+      );
+
+      await _respond(
+        "I couldn't add the product to your cart right now. Please try again.",
+      );
+
+      return false;
+    }
+  }
+
+  // ============================================================
+  // ADD ONE PRODUCT
+  // ============================================================
+
+  Future<void> _addSingleProductToCart(
+    CollectionReference<
+            Map<String, dynamic>>
+        cart,
+    Map<String, dynamic> product,
+  ) async {
+    final productId =
+        _productId(product);
+
+    if (productId.isEmpty) {
+      throw Exception(
+        'Missing product ID',
       );
     }
 
-    if (detectedColours.isNotEmpty) {
-      result['colour'] = _mergeList(
-        _stringList(result['colour']),
-        detectedColours,
+    final cartItem =
+        cart.doc(productId);
+
+    final existing =
+        await cartItem.get();
+
+    if (existing.exists) {
+      final quantity =
+          _toInt(
+        existing.data()?['quantity'],
       );
+
+      await cartItem.update({
+        'quantity': quantity + 1,
+        'updatedAt':
+            FieldValue.serverTimestamp(),
+      });
+
+      return;
     }
 
-    if (detectedStyles.isNotEmpty) {
-      result['style'] = _mergeList(
-        _stringList(result['style']),
-        detectedStyles,
-      );
+    await cartItem.set({
+      'productId':
+          productId,
+
+      'title':
+          _productTitle(product),
+
+      'description':
+          (product['description'] ??
+                  '')
+              .toString(),
+
+      'price':
+          (product['price'] ??
+                  '0')
+              .toString(),
+
+      'imageUrl':
+          _productImage(product),
+
+      'sellerId':
+          (product['sellerId'] ??
+                  '')
+              .toString(),
+
+      'sellerName':
+          (product['sellerName'] ??
+                  'Local Artisan')
+              .toString(),
+
+      'quantity': 1,
+
+      'addedAt':
+          FieldValue.serverTimestamp(),
+
+      'updatedAt':
+          FieldValue.serverTimestamp(),
+    });
+  }
+
+  // ============================================================
+  // CATALOG QUESTION
+  // ============================================================
+
+  Future<void> _askCatalogQuestion({
+    String? category,
+    bool giftRequest = false,
+  }) async {
+    final options =
+        await _getCatalogOptions(
+      category: category,
+    );
+
+    if (!mounted) return;
+
+    String question;
+
+    if (category != null &&
+        category.isNotEmpty) {
+      question =
+          'Sure! What kind of ${category.toLowerCase()} would you like?';
+    } else if (giftRequest) {
+      question =
+          'Sure! What kind of handmade gift are you looking for?';
+    } else {
+      question =
+          'Sure! What kind of handmade product are you looking for?';
     }
 
-    if (_containsHandmade(text)) {
-      result['handmade'] = true;
-    }
+    await _respond(
+      question,
+      choices: options,
+    );
+  }
 
-    // Preserve useful fields returned by LlamaService.
-    for (final key in const [
-      'category',
-      'subcategory',
-      'productType',
-      'occasion',
-      'handmade',
-      'needsClarification',
-      'clarificationQuestion',
-    ]) {
-      final value = current[key];
+  // ============================================================
+  // GET REAL CATALOG OPTIONS
+  // ============================================================
 
-      if (value != null &&
-          value.toString().trim().isNotEmpty) {
-        // Deterministic local detection wins for type/category because
-        // those fields control strict product filtering.
-        if (key == 'category' &&
-            detectedCategory != null) {
+  Future<List<String>>
+      _getCatalogOptions({
+    String? category,
+  }) async {
+    try {
+      final snapshot =
+          await _firestore
+              .collection('products')
+              .where(
+                'isAvailable',
+                isEqualTo: true,
+              )
+              .get();
+
+      final options =
+          <String>{};
+
+      for (final doc
+          in snapshot.docs) {
+        final data =
+            doc.data();
+
+        if (category != null &&
+            category.isNotEmpty &&
+            !_matchesCategory(
+              data,
+              category,
+            )) {
           continue;
         }
 
-        if (key == 'productType' &&
-            detectedProductType != null) {
-          continue;
-        }
+        final type =
+            data['productType'] ??
+                data['subcategory'];
 
-        if (key == 'occasion' &&
-            detectedOccasion != null) {
-          continue;
+        if (type != null &&
+            type.toString().trim().isNotEmpty) {
+          options.add(
+            type.toString().trim(),
+          );
         }
-
-        result[key] = value;
       }
+
+      final sorted =
+          options.toList()
+            ..sort();
+
+      return sorted
+          .take(10)
+          .toList();
+    } catch (e) {
+      debugPrint(
+        'Catalog option error: $e',
+      );
+
+      // Fallback to known types.
+      if (category == 'Jewellery') {
+        return [
+          'Bangles',
+          'Necklace',
+          'Earrings',
+          'Bracelet',
+        ];
+      }
+
+      if (category == 'Home Decor') {
+        return [
+          'Candle',
+          'Candle Holder',
+          'Clay Pot',
+          'Flower Vase',
+          'Wall Hanging',
+          'Table Runner',
+          'Table Cloth',
+        ];
+      }
+
+      return [];
+    }
+  }
+
+  // ============================================================
+  // FIRESTORE PRODUCT SEARCH
+  // ============================================================
+
+  Future<List<Map<String, dynamic>>>
+      _findMatchingProducts(
+    Map<String, dynamic> intent,
+  ) async {
+    final snapshot =
+        await _firestore
+            .collection('products')
+            .where(
+              'isAvailable',
+              isEqualTo: true,
+            )
+            .get();
+
+    final allProducts =
+        <Map<String, dynamic>>[];
+
+    for (final doc
+        in snapshot.docs) {
+      final data =
+          Map<String, dynamic>.from(
+        doc.data(),
+      );
+
+      data['documentId'] =
+          doc.id;
+
+      allProducts.add(
+        data,
+      );
     }
 
-    // Merge list fields rather than letting a follow-up erase old filters.
-    for (final key in const [
-      'material',
-      'colour',
-      'style',
-      'keywords',
-    ]) {
-      final incoming = _stringList(current[key]);
+    // ==========================================================
+    // EXACT PRODUCT NAME SEARCH
+    //
+    // Example:
+    // "show me Beaded Necklace"
+    //
+    // Prefer the exact Firestore product.
+    // ==========================================================
 
-      if (incoming.isNotEmpty) {
-        result[key] = _mergeList(
-          _stringList(result[key]),
-          incoming,
+    final exactProducts =
+        _findExactTitleMatches(
+      allProducts,
+      _currentSearchText(intent),
+    );
+
+    if (exactProducts.isNotEmpty) {
+      return exactProducts
+          .take(5)
+          .toList();
+    }
+
+    // ==========================================================
+    // FILTER PRODUCTS
+    // ==========================================================
+
+    final scored =
+        <_ScoredProduct>[];
+
+    for (final product
+        in allProducts) {
+      final requestedType =
+          _normalise(
+        intent['productType'],
+      );
+
+      final requestedCategory =
+          _normalise(
+        intent['category'],
+      );
+
+      // --------------------------------------------------------
+      // PRODUCT TYPE
+      // --------------------------------------------------------
+
+      if (requestedType.isNotEmpty &&
+          !_matchesProductType(
+            product,
+            requestedType,
+          )) {
+        continue;
+      }
+
+      // --------------------------------------------------------
+      // CATEGORY
+      // --------------------------------------------------------
+
+      if (requestedCategory.isNotEmpty &&
+          !_matchesCategory(
+            product,
+            requestedCategory,
+          )) {
+        continue;
+      }
+
+      // --------------------------------------------------------
+      // HANDMADE
+      // --------------------------------------------------------
+
+      if (intent['handmade'] ==
+              true &&
+          !_isHandmadeProduct(
+            product,
+          )) {
+        continue;
+      }
+
+      // --------------------------------------------------------
+      // MATERIAL
+      // --------------------------------------------------------
+
+      final materials =
+          _stringList(
+        intent['material'],
+      );
+
+      if (materials.isNotEmpty &&
+          !_matchesAnyField(
+            product,
+            'material',
+            materials,
+          )) {
+        continue;
+      }
+
+      // --------------------------------------------------------
+      // COLOUR
+      // --------------------------------------------------------
+
+      final colours =
+          _stringList(
+        intent['colour'],
+      );
+
+      if (colours.isNotEmpty &&
+          !_matchesAnyField(
+            product,
+            'colour',
+            colours,
+          )) {
+        continue;
+      }
+
+      // --------------------------------------------------------
+      // STYLE
+      // --------------------------------------------------------
+
+      final styles =
+          _stringList(
+        intent['style'],
+      );
+
+      if (styles.isNotEmpty &&
+          !_matchesAnyField(
+            product,
+            'style',
+            styles,
+          )) {
+        continue;
+      }
+
+      // --------------------------------------------------------
+      // OCCASION
+      // --------------------------------------------------------
+
+      final occasions =
+          _stringList(
+        intent['occasion'],
+      );
+
+      if (occasions.isNotEmpty &&
+          !_matchesOccasion(
+            product,
+            occasions,
+          )) {
+        continue;
+      }
+
+      // --------------------------------------------------------
+      // BUDGET
+      // --------------------------------------------------------
+
+      if (!_matchesBudget(
+        product,
+        intent['budget'],
+      )) {
+        continue;
+      }
+
+      final score =
+          _calculateScore(
+        product,
+        intent,
+      );
+
+      scored.add(
+        _ScoredProduct(
+          product: product,
+          score: score,
+        ),
+      );
+    }
+
+    scored.sort(
+      (a, b) =>
+          b.score.compareTo(
+        a.score,
+      ),
+    );
+
+    return scored
+        .take(5)
+        .map(
+          (item) => item.product,
+        )
+        .toList();
+  }
+
+  // ============================================================
+  // CURRENT SEARCH TEXT
+  //
+  // Stored in intent so exact-title matching can work.
+  // ============================================================
+
+  String _currentSearchText(
+    Map<String, dynamic> intent,
+  ) {
+    return (
+      intent['_searchText'] ??
+      ''
+    ).toString();
+  }
+
+  // ============================================================
+  // EXACT TITLE MATCH
+  // ============================================================
+
+  List<Map<String, dynamic>>
+      _findExactTitleMatches(
+    List<Map<String, dynamic>>
+        products,
+    String query,
+  ) {
+    final normalizedQuery =
+        _normalise(query);
+
+    if (normalizedQuery.isEmpty) {
+      return [];
+    }
+
+    final matches =
+        <Map<String, dynamic>>[];
+
+    for (final product
+        in products) {
+      final title =
+          _normalise(
+        product['title'],
+      );
+
+      if (title.isEmpty) {
+        continue;
+      }
+
+      if (title ==
+          normalizedQuery) {
+        matches.add(
+          product,
         );
       }
     }
 
-    // If local information clearly gives us a search intent, do not let
-    // an overly cautious model response turn it into a clarification.
-    if (_hasConcreteLocalIntent(text)) {
-      result['needsClarification'] = false;
-      result['clarificationQuestion'] = '';
+    return matches;
+  }
+
+  // ============================================================
+  // MERGE INTENT
+  // ============================================================
+
+  Map<String, dynamic> _mergeIntent({
+    required Map<String, dynamic>?
+        previous,
+    required Map<String, dynamic>
+        current,
+    required String userMessage,
+  }) {
+    final result =
+        <String, dynamic>{
+      ...?previous,
+      ...current,
+    };
+
+    result['_searchText'] =
+        userMessage;
+
+    final type =
+        _detectProductType(
+      userMessage,
+    );
+
+    final category =
+        _detectCategory(
+      userMessage,
+    );
+
+    final colours =
+        _detectColours(
+      userMessage,
+    );
+
+    final materials =
+        _detectMaterials(
+      userMessage,
+    );
+
+    if (type != null) {
+      result['productType'] =
+          type;
     }
 
-    if (detectedKeywords.isNotEmpty &&
-        _stringList(result['keywords']).isEmpty) {
-      result['keywords'] = detectedKeywords;
+    if (category != null) {
+      result['category'] =
+          category;
+    }
+
+    if (colours.isNotEmpty) {
+      result['colour'] =
+          colours;
+    }
+
+    if (materials.isNotEmpty) {
+      result['material'] =
+          materials;
+    }
+
+    // Product type determines category.
+    if (type != null) {
+      if (_isJewelleryType(
+        type,
+      )) {
+        result['category'] =
+            'Jewellery';
+      }
+
+      if (_isHomeDecorType(
+        type,
+      )) {
+        result['category'] =
+            'Home Decor';
+      }
+
+      if (_isClothingType(
+        type,
+      )) {
+        result['category'] =
+            'Clothing';
+      }
+
+      if (_isBagType(
+        type,
+      )) {
+        result['category'] =
+            'Bags';
+      }
+    }
+
+    // ----------------------------------------------------------
+    // OCCASION
+    // ----------------------------------------------------------
+
+    final occasion =
+        _detectOccasion(
+      userMessage,
+    );
+
+    if (occasion != null) {
+      result['occasion'] =
+          [occasion];
+    }
+
+    // ----------------------------------------------------------
+    // HANDMADE
+    // ----------------------------------------------------------
+
+    if (_containsHandmade(
+      userMessage,
+    )) {
+      result['handmade'] =
+          true;
+    }
+
+    // ----------------------------------------------------------
+    // Preserve previous intent for follow-ups.
+    // ----------------------------------------------------------
+bool _isExplicitNewSearch(String message) {
+  final text = message.trim().toLowerCase();
+
+  if (text.isEmpty) {
+    return false;
+  }
+
+  // These are usually responses to the assistant's
+  // previous question/action, NOT new searches.
+  const continuationPhrases = {
+    'yes',
+    'yeah',
+    'yep',
+    'yup',
+    'sure',
+    'okay',
+    'ok',
+    'please',
+    'yes please',
+    'yes this one',
+    'this one',
+    'i like this',
+    'i like this one',
+    'i want this',
+    'i want this one',
+    'i would like this',
+    'i would like to buy this',
+    'i would like to buy these',
+    'add it',
+    'add this',
+    'add this to cart',
+    'buy this',
+    'buy this one',
+    'no',
+    'no thanks',
+    'no thank you',
+    'nevermind',
+  };
+
+  if (continuationPhrases.contains(text)) {
+    return false;
+  }
+
+  // Explicit phrases that clearly indicate the user
+  // wants to start a different product search.
+  const newSearchPhrases = [
+    'show me',
+    'find me',
+    'i am looking for',
+    'i\'m looking for',
+    'i want',
+    'i need',
+    'looking for',
+    'search for',
+    'search me',
+    'find some',
+    'show some',
+    'show a',
+    'show me some',
+    'show me a',
+    'do you have',
+    'can you show',
+    'can i see',
+    'i would like',
+    'i\'d like',
+  ];
+
+  for (final phrase in newSearchPhrases) {
+    if (text.startsWith(phrase)) {
+      return true;
+    }
+  }
+
+  // Product/category words strongly indicate a new search
+  // when the message is not merely confirming a product.
+  const productWords = [
+    'necklace',
+    'necklaces',
+    'bangle',
+    'bangles',
+    'earring',
+    'earrings',
+    'jewellery',
+    'jewelry',
+    'table runner',
+    'table runners',
+    'table cloth',
+    'tablecloth',
+    'clay pot',
+    'pots',
+    'home decor',
+    'home decoration',
+    'kitchenware',
+    'bags',
+    'bag',
+    'clothing',
+    'dress',
+    'dresses',
+    'accessories',
+    'gift',
+    'gifts',
+    'handmade',
+  ];
+
+  for (final word in productWords) {
+    if (text.contains(word)) {
+      // Avoid treating a product confirmation such as
+      // "I like the beaded necklace" as a new search.
+      if (text.startsWith('i like') ||
+          text.startsWith('i want this') ||
+          text.startsWith('i would like this') ||
+          text.startsWith('this one') ||
+          text.startsWith('yes')) {
+        return false;
+      }
+
+      return true;
+    }
+  }
+
+  return false;
+}
+    if (previous != null) {
+      if (type == null &&
+          !_isExplicitNewSearch(
+            userMessage,
+          )) {
+        if (previous['productType'] !=
+                null &&
+            result['productType']
+                == null) {
+          result['productType'] =
+              previous['productType'];
+        }
+      }
     }
 
     return result;
   }
 
-  static const Set<String> _jewelleryTypes = {
-    'Bangles',
-    'Necklace',
-    'Earrings',
-    'Bracelet',
-  };
+  // ============================================================
+  // MATCH PRODUCT TYPE
+  // ============================================================
 
-  static const Set<String> _homeDecorTypes = {
-    'Lantern',
-    'Candle',
-    'Flower Vase',
-    'Clay Pot',
-    'Candle Holder',
-    'Wall Hanging',
-    'Serving Tray',
-    'Basket',
-    'Table Cloth',
-    'Table Runner',
-  };
+  bool _matchesProductType(
+    Map<String, dynamic> product,
+    String requestedType,
+  ) {
+    final requested =
+        _normalise(
+      requestedType,
+    );
 
-  static const Set<String> _bagTypes = {
-    'Bag',
-  };
+    final fields = [
+      _normalise(
+        product['productType'],
+      ),
+      _normalise(
+        product['subcategory'],
+      ),
+      _normalise(
+        product['title'],
+      ),
+    ];
 
-  static const Set<String> _clothingTypes = {
-    'Saree',
-    'Dress',
-  };
+    final aliases =
+        _aliasesForType(
+      requested,
+    );
 
-  // -------------------------------------------------------------------------
-  // CASE DETECTION
-  // -------------------------------------------------------------------------
+    return aliases.any(
+      (alias) => fields.any(
+        (field) =>
+            field == alias ||
+            field.contains(alias),
+      ),
+    );
+  }
 
-  bool _isGreetingOrCasual(String text) {
-    const exactGreetings = {
+  // ============================================================
+  // MATCH CATEGORY
+  // ============================================================
+
+  bool _matchesCategory(
+    Map<String, dynamic> product,
+    String requestedCategory,
+  ) {
+    final requested =
+        _normalise(
+      requestedCategory,
+    );
+
+    final category =
+        _normalise(
+      product['category'],
+    );
+
+    final sellerCategory =
+        _normalise(
+      product['sellerCategory'],
+    );
+
+    if (category ==
+            requested ||
+        sellerCategory ==
+            requested) {
+      return true;
+    }
+
+    final type =
+        _normalise(
+      product['productType'],
+    );
+
+    if (requested ==
+            'jewellery' &&
+        _isJewelleryType(
+          _titleCaseType(type),
+        )) {
+      return true;
+    }
+
+    if (requested ==
+            'home decor' &&
+        _isHomeDecorType(
+          _titleCaseType(type),
+        )) {
+      return true;
+    }
+
+    if (requested ==
+            'clothing' &&
+        _isClothingType(
+          _titleCaseType(type),
+        )) {
+      return true;
+    }
+
+    if (requested ==
+            'bags' &&
+        _isBagType(
+          _titleCaseType(type),
+        )) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // ============================================================
+  // MATCH FIELD
+  // ============================================================
+
+  bool _matchesAnyField(
+    Map<String, dynamic> product,
+    String field,
+    List<String> requested,
+  ) {
+    final values =
+        _stringList(
+      product[field],
+    );
+
+    final text =
+        _buildProductText(
+      product,
+    );
+
+    return requested.any(
+      (target) {
+        final t =
+            _normalise(target);
+
+        return values.any(
+              (value) =>
+                  value == t ||
+                  value.contains(t) ||
+                  t.contains(value),
+            ) ||
+            text.contains(t);
+      },
+    );
+  }
+
+  // ============================================================
+  // OCCASION
+  // ============================================================
+
+  bool _matchesOccasion(
+    Map<String, dynamic> product,
+    List<String> requested,
+  ) {
+    final text =
+        _buildProductText(
+      product,
+    );
+
+    final occasions =
+        _stringList(
+      product['occasion'],
+    );
+
+    final useCases =
+        _stringList(
+      product['useCases'],
+    );
+
+    return requested.any(
+      (occasion) {
+        final value =
+            _normalise(
+          occasion,
+        );
+
+        return occasions.any(
+              (item) =>
+                  item.contains(value),
+            ) ||
+            useCases.any(
+              (item) =>
+                  item.contains(value),
+            ) ||
+            text.contains(value);
+      },
+    );
+  }
+
+  // ============================================================
+  // BUDGET
+  // ============================================================
+
+  bool _matchesBudget(
+    Map<String, dynamic> product,
+    dynamic budget,
+  ) {
+    if (budget is! Map) {
+      return true;
+    }
+
+    final min =
+        _toDouble(
+      budget['min'],
+    );
+
+    final max =
+        _toDouble(
+      budget['max'],
+    );
+
+    if (min == null &&
+        max == null) {
+      return true;
+    }
+
+    final price =
+        _toDouble(
+      product['price'],
+    );
+
+    if (price == null) {
+      return true;
+    }
+
+    if (min != null &&
+        price < min) {
+      return false;
+    }
+
+    if (max != null &&
+        price > max) {
+      return false;
+    }
+
+    return true;
+  }
+
+  // ============================================================
+  // SCORE
+  // ============================================================
+
+  int _calculateScore(
+    Map<String, dynamic> product,
+    Map<String, dynamic> intent,
+  ) {
+    int score = 0;
+
+    final title =
+        _normalise(
+      product['title'],
+    );
+
+    final text =
+        _buildProductText(
+      product,
+    );
+
+    final type =
+        _normalise(
+      product['productType'],
+    );
+
+    final requestedType =
+        _normalise(
+      intent['productType'],
+    );
+
+    final requestedCategory =
+        _normalise(
+      intent['category'],
+    );
+
+    if (requestedType.isNotEmpty &&
+        _matchesProductType(
+          product,
+          requestedType,
+        )) {
+      score += 200;
+    }
+
+    if (requestedCategory.isNotEmpty &&
+        _matchesCategory(
+          product,
+          requestedCategory,
+        )) {
+      score += 100;
+    }
+
+    for (final colour
+        in _stringList(
+      intent['colour'],
+    )) {
+      if (text.contains(
+        colour,
+      )) {
+        score += 50;
+      }
+    }
+
+    for (final material
+        in _stringList(
+      intent['material'],
+    )) {
+      if (text.contains(
+        material,
+      )) {
+        score += 50;
+      }
+    }
+
+    for (final style
+        in _stringList(
+      intent['style'],
+    )) {
+      if (text.contains(
+        style,
+      )) {
+        score += 40;
+      }
+    }
+
+    for (final occasion
+        in _stringList(
+      intent['occasion'],
+    )) {
+      if (text.contains(
+        occasion,
+      )) {
+        score += 40;
+      }
+    }
+
+    if (requestedType.isNotEmpty &&
+        title.contains(
+          requestedType,
+        )) {
+      score += 60;
+    }
+
+    if (type.isNotEmpty &&
+        requestedType == type) {
+      score += 80;
+    }
+
+    return score;
+  }
+
+  // ============================================================
+  // PRODUCT TEXT
+  // ============================================================
+
+  String _buildProductText(
+    Map<String, dynamic> product,
+  ) {
+    return [
+      product['title'],
+      product['description'],
+      product['category'],
+      product['subcategory'],
+      product['productType'],
+      product['sellerCategory'],
+      ..._stringList(
+        product['tags'],
+      ),
+      ..._stringList(
+        product['keywords'],
+      ),
+      ..._stringList(
+        product['searchTerms'],
+      ),
+      ..._stringList(
+        product['material'],
+      ),
+      ..._stringList(
+        product['colour'],
+      ),
+      ..._stringList(
+        product['style'],
+      ),
+      ..._stringList(
+        product['occasion'],
+      ),
+      ..._stringList(
+        product['useCases'],
+      ),
+    ].map(
+      _normalise,
+    ).where(
+      (value) => value.isNotEmpty,
+    ).join(' ');
+  }
+
+  // ============================================================
+  // HANDMADE
+  // ============================================================
+
+  bool _isHandmadeProduct(
+    Map<String, dynamic> product,
+  ) {
+    final text =
+        _buildProductText(
+      product,
+    );
+
+    const words = [
+      'handmade',
+      'handcrafted',
+      'hand made',
+      'hand crafted',
+      'artisan',
+      'crafted',
+      'locally made',
+    ];
+
+    return words.any(
+      text.contains,
+    );
+  }
+
+  // ============================================================
+  // CATEGORY DETECTION
+  // ============================================================
+
+  String? _detectCategory(
+    String text,
+  ) {
+    final normalized =
+        _normalise(text);
+
+    for (final entry
+        in _categoryAliases.entries) {
+      for (final alias
+          in entry.value) {
+        if (_containsPhrase(
+          normalized,
+          alias,
+        )) {
+          return entry.key;
+        }
+      }
+    }
+
+    final type =
+        _detectProductType(
+      normalized,
+    );
+
+    if (type != null) {
+      if (_isJewelleryType(
+        type,
+      )) {
+        return 'Jewellery';
+      }
+
+      if (_isHomeDecorType(
+        type,
+      )) {
+        return 'Home Decor';
+      }
+
+      if (_isClothingType(
+        type,
+      )) {
+        return 'Clothing';
+      }
+
+      if (_isBagType(
+        type,
+      )) {
+        return 'Bags';
+      }
+    }
+
+    return null;
+  }
+
+  // ============================================================
+  // PRODUCT TYPE DETECTION
+  // ============================================================
+
+  String? _detectProductType(
+    String text,
+  ) {
+    final normalized =
+        _normalise(text);
+
+    String? best;
+    int bestLength = 0;
+
+    for (final entry
+        in _productTypeAliases.entries) {
+      for (final alias
+          in entry.value) {
+        if (_containsPhrase(
+          normalized,
+          alias,
+        )) {
+          if (alias.length >
+              bestLength) {
+            best = entry.key;
+            bestLength =
+                alias.length;
+          }
+        }
+      }
+    }
+
+    return best;
+  }
+
+  // ============================================================
+  // OCCASION
+  // ============================================================
+
+  String? _detectOccasion(
+    String text,
+  ) {
+    final normalized =
+        _normalise(text);
+
+    const aliases = {
+      'wedding': [
+        'wedding',
+        'bridal',
+        'bride',
+        'marriage',
+        'shaadi',
+      ],
+      'festival': [
+        'festival',
+        'festive',
+        'celebration',
+      ],
+      'birthday': [
+        'birthday',
+      ],
+      'housewarming': [
+        'housewarming',
+        'house warming',
+      ],
+      'gift': [
+        'gift',
+        'gifts',
+        'present',
+        'presents',
+      ],
+    };
+
+    for (final entry
+        in aliases.entries) {
+      for (final alias
+          in entry.value) {
+        if (_containsPhrase(
+          normalized,
+          alias,
+        )) {
+          return entry.key;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  // ============================================================
+  // COLOURS
+  // ============================================================
+
+  List<String> _detectColours(
+    String text,
+  ) {
+    final normalized =
+        _normalise(text);
+
+    return _colours.where(
+      (colour) =>
+          _containsPhrase(
+        normalized,
+        colour,
+      ),
+    ).toList();
+  }
+
+  // ============================================================
+  // MATERIAL
+  // ============================================================
+
+  List<String> _detectMaterials(
+    String text,
+  ) {
+    final normalized =
+        _normalise(text);
+
+    final result =
+        <String>[];
+
+    for (final entry
+        in _materialAliases.entries) {
+      if (entry.value.any(
+        (alias) =>
+            _containsPhrase(
+          normalized,
+          alias,
+        ),
+      )) {
+        result.add(
+          entry.key,
+        );
+      }
+    }
+
+    return result;
+  }
+
+  // ============================================================
+  // HANDMADE DETECTION
+  // ============================================================
+
+  bool _containsHandmade(
+    String text,
+  ) {
+    final normalized =
+        _normalise(text);
+
+    return [
+      'handmade',
+      'hand made',
+      'handcrafted',
+      'hand crafted',
+      'artisan',
+      'crafted',
+    ].any(
+      (word) =>
+          _containsPhrase(
+        normalized,
+        word,
+      ),
+    );
+  }
+
+  // ============================================================
+  // BROAD REQUEST CHECK
+  // ============================================================
+
+  bool _hasNoSpecificAttribute(
+    Map<String, dynamic> intent,
+  ) {
+    return _stringList(
+          intent['colour'],
+        ).isEmpty &&
+        _stringList(
+          intent['material'],
+        ).isEmpty &&
+        _stringList(
+          intent['style'],
+        ).isEmpty &&
+        _stringList(
+          intent['occasion'],
+        ).isEmpty;
+  }
+
+  bool _hasUsefulSearchIntent(
+    Map<String, dynamic> intent,
+  ) {
+    return _hasNonEmpty(
+          intent['category'],
+        ) ||
+        _hasNonEmpty(
+          intent['productType'],
+        ) ||
+        _stringList(
+          intent['colour'],
+        ).isNotEmpty ||
+        _stringList(
+          intent['material'],
+        ).isNotEmpty ||
+        _stringList(
+          intent['style'],
+        ).isNotEmpty ||
+        _stringList(
+          intent['occasion'],
+        ).isNotEmpty ||
+        intent['handmade'] == true;
+  }
+
+  // ============================================================
+  // PRODUCT SELECTION DETECTION
+  // ============================================================
+
+  List<Map<String, dynamic>>
+      _productsMentionedByName(
+    String text,
+  ) {
+    final normalized =
+        _normalise(text);
+
+    final matches =
+        <Map<String, dynamic>>[];
+
+    for (final product
+        in _shownProducts) {
+      final title =
+          _normalise(
+        product['title'],
+      );
+
+      if (title.isEmpty) {
+        continue;
+      }
+
+      if (normalized.contains(
+        title,
+      )) {
+        matches.add(
+          product,
+        );
+      }
+    }
+
+    return matches;
+  }
+
+  bool _refersToDisplayedProduct(
+    String normalized,
+  ) {
+    const phrases = [
+      'this one',
+      'that one',
+      'yes this one',
+      'yes that one',
+      'i like this',
+      'i like that',
+      'i like this one',
+      'i like that one',
+      'buy this',
+      'buy that',
+      'buy this one',
+      'buy that one',
+      'i want this',
+      'i want that',
+      'i want this one',
+      'i want that one',
+      'i would like this',
+      'i would like that',
+      'i would like to buy this',
+      'i would like to buy that',
+      'yes i want this',
+      'yes i want that',
+    ];
+
+    return phrases.any(
+      normalized.contains,
+    );
+  }
+
+  bool _refersToMultipleDisplayedProducts(
+    String normalized,
+  ) {
+    const phrases = [
+      'these',
+      'those',
+      'i like these',
+      'i like those',
+      'buy these',
+      'buy those',
+      'i want these',
+      'i want those',
+      'i would like to buy these',
+      'i would like to buy those',
+    ];
+
+    return phrases.any(
+      normalized.contains,
+    );
+  }
+
+  // ============================================================
+  // NEW SHOPPING REQUEST
+  // ============================================================
+
+  bool _looksLikeNewShoppingRequest(
+    String text,
+  ) {
+    return _detectCategory(text) != null ||
+        _detectProductType(text) != null ||
+        _detectOccasion(text) != null ||
+        _detectColours(text).isNotEmpty ||
+        _detectMaterials(text).isNotEmpty ||
+        _containsHandmade(text) ||
+        text.contains(
+          'show me',
+        ) ||
+        text.contains(
+          'looking for',
+        ) ||
+        text.contains(
+          'i want',
+        ) ||
+        text.contains(
+          'i need',
+        ) ||
+        text.contains(
+          'find me',
+        );
+  }
+
+  // ============================================================
+  // CASUAL
+  // ============================================================
+
+  bool _isCasualMessage(
+    String text,
+  ) {
+    const values = {
       'hi',
       'hello',
       'hey',
@@ -963,55 +2600,104 @@ class _AIAssistantState extends State<AIAssistant> {
       'goodbye',
     };
 
-    if (exactGreetings.contains(text)) {
-      return true;
-    }
+    return values.contains(
+      text,
+    );
+  }
 
-    if (text.startsWith('hello ') ||
-        text.startsWith('hi ') ||
-        text.startsWith('hey ')) {
-      final shoppingWords = [
-        'looking',
-        'want',
-        'need',
-        'show',
-        'find',
-        'buy',
-        'product',
-        'bangle',
-        'necklace',
-        'earring',
-        'bag',
-        'candle',
-        'vase',
-        'pot',
-      ];
+  Future<void>
+      _handleNormalConversation(
+    String text,
+  ) async {
+    String response;
 
-      if (!shoppingWords.any(text.contains)) {
-        return true;
+    try {
+      response =
+          await LlamaService
+              .generateResponse(
+        userMessage: text,
+        products: const [],
+        intent: const {
+          'action':
+              'normal_conversation',
+        },
+        conversation:
+            _conversation,
+      );
+    } catch (e) {
+      if (text.contains(
+            'thank',
+          )) {
+        response =
+            "You're welcome! 😊 What handmade products are you looking for?";
+      } else if (text == 'bye' ||
+          text == 'goodbye') {
+        response =
+            "Happy shopping on Karigari! 👋";
+      } else {
+        response =
+            "Hi! 👋 What handmade products are you looking for?";
       }
     }
 
-    return false;
+    await _respond(
+      response,
+    );
   }
 
-  String _casualResponse(String text) {
-    if (text == 'thanks' ||
-        text == 'thank you' ||
-        text == 'thank you so much') {
-      return "You're welcome! Whenever you're ready, tell me what handmade product you'd like to find.";
+  // ============================================================
+  // POSITIVE
+  // ============================================================
+
+  bool _isPositive(
+    String text,
+  ) {
+    const values = {
+      'yes',
+      'yes please',
+      'yep',
+      'yeah',
+      'yup',
+      'sure',
+      'okay',
+      'ok',
+      'go ahead',
+      'please do',
+      'add it',
+      'add that',
+      'add this',
+      'do it',
+      'yes add it',
+      'yes i want it',
+      'yes i would like to buy this',
+      'yes i would like to buy it',
+    };
+
+    if (values.contains(
+      text,
+    )) {
+      return true;
     }
 
-    if (text == 'bye' ||
-        text == 'goodbye') {
-      return "Happy shopping on Karigari! Come back anytime if you need help finding a handmade product.";
-    }
-
-    return "Hi! 👋 I can help you find handmade products on Karigari. Tell me what you're looking for — for example, \"red handmade bangles for a wedding.\"";
+    return text.startsWith(
+          'yes ',
+        ) ||
+        text.startsWith(
+          'yeah ',
+        ) ||
+        text.startsWith(
+          'yep ',
+        );
   }
 
-  bool _isNegative(String text) {
-    const negatives = {
+  // ============================================================
+  // NEGATIVE
+  // ============================================================
+
+  bool _isNegative(
+    String text,
+  ) {
+    const values = {
       'no',
       'nope',
       'nah',
@@ -1024,1021 +2710,147 @@ class _AIAssistantState extends State<AIAssistant> {
       'not that',
     };
 
-    return negatives.contains(text);
-  }
-
-  bool _isConfirmation(String text) {
-    const confirmations = {
-      'yes',
-      'yes please',
-      'yes show',
-      'show',
-      'show me',
-      'okay',
-      'ok',
-      'sure',
-      'please',
-      'go ahead',
-      'that works',
-      'that is fine',
-      "that's fine",
-      'thats fine',
-      'fine',
-      'yep',
-      'yeah',
-      'yup',
-    };
-
-    return confirmations.contains(text);
-  }
-
-  bool _isMoreRequest(String text) {
-    const moreRequests = {
-      'more',
-      'show more',
-      'more products',
-      'show me more',
-      'more options',
-      'more items',
-      'anything else',
-      'what else',
-      'other options',
-      'other products',
-      'show other products',
-    };
-
-    return moreRequests.contains(text);
-  }
-
-  bool _isCorrection(String text) {
-    const words = [
-      'actually',
-      'instead',
-      'rather',
-      'i meant',
-      'i mean',
-      'no i want',
-      'no i need',
-      'not that',
-      'change it',
-      'change that',
-    ];
-
-    return words.any(text.contains);
-  }
-
-  bool _isExplicitNewSearch(String text) {
-    if (_lastIntent == null) {
-      return false;
-    }
-
-    const starters = [
-      'now show',
-      'now i want',
-      'now i need',
-      'show me another',
-      'find me another',
-      'i want something else',
-      'i need something else',
-      'looking for something else',
-    ];
-
-    return starters.any(text.contains);
-  }
-
-  bool _hasUsefulSearchIntent(
-    Map<String, dynamic> intent,
-  ) {
-    return _hasNonEmpty(intent['category']) ||
-        _hasNonEmpty(intent['productType']) ||
-        _hasNonEmpty(intent['subcategory']) ||
-        _stringList(intent['material']).isNotEmpty ||
-        _stringList(intent['colour']).isNotEmpty ||
-        _stringList(intent['style']).isNotEmpty ||
-        _stringList(intent['occasion']).isNotEmpty ||
-        intent['handmade'] == true ||
-        _stringList(intent['keywords']).isNotEmpty ||
-        _stringList(intent['searchTerms']).isNotEmpty;
-  }
-
-  bool _hasConcreteLocalIntent(String text) {
-    return _detectCategory(text) != null ||
-        _detectProductType(text) != null ||
-        _detectOccasion(text) != null ||
-        _detectMaterials(text).isNotEmpty ||
-        _detectColours(text).isNotEmpty ||
-        _detectStyles(text).isNotEmpty ||
-        _containsHandmade(text);
-  }
-
-  bool _isVagueRequest({
-    required String text,
-    required Map<String, dynamic> intent,
-  }) {
-    final normalized = _normalise(text);
-
-    if (_isConfirmation(normalized) ||
-        _isMoreRequest(normalized)) {
-      return false;
-    }
-
-    if (_hasConcreteLocalIntent(normalized)) {
-      return false;
-    }
-
-    if (_hasUsefulSearchIntent(intent) &&
-        intent['needsClarification'] != true) {
-      return false;
-    }
-
-    const vaguePhrases = [
-      'something',
-      'something nice',
-      'something good',
-      'anything',
-      'anything nice',
-      'some product',
-      'some products',
-      'some handmade stuff',
-      'handmade stuff',
-      'show me',
-      'find something',
-      'i want something',
-      'i need something',
-      'what do you have',
-      'what can i buy',
-      'give me something',
-    ];
-
-    if (vaguePhrases.contains(normalized)) {
-      return true;
-    }
-
-    // Very short requests without a recognizable shopping entity are
-    // treated as vague rather than producing random products.
-    final words = normalized
-        .split(RegExp(r'\s+'))
-        .where((w) => w.isNotEmpty)
-        .toList();
-
-    return words.length <= 2 &&
-        !_hasUsefulSearchIntent(intent);
-  }
-
-  String _clarificationForVagueRequest(
-    String text,
-    Map<String, dynamic> intent,
-  ) {
-    final category =
-        intent['category']?.toString().trim();
-
-    if (category != null &&
-        category.isNotEmpty) {
-      return "Sure! What type of ${category.toLowerCase()} are you looking for? For example, you can ask for a specific item, colour, material, or occasion.";
-    }
-
-    return "Sure! What kind of handmade product are you looking for? You can tell me a product type, category, colour, material, or occasion — for example, \"handmade red bangles for a wedding.\"";
-  }
-
-  String _clarificationForIntent(
-    Map<String, dynamic> intent,
-  ) {
-    final category =
-        intent['category']?.toString().trim();
-
-    if (category != null &&
-        category.isNotEmpty) {
-      return "I can help with ${category.toLowerCase()}. Would you like a specific product type, or should I show you a variety?";
-    }
-
-    return "Could you tell me a little more about the handmade product you're looking for?";
-  }
-
-  bool _mentionsDifferentProductType(
-    String text,
-    dynamic oldType,
-  ) {
-    final old = _normalise(oldType);
-
-    if (old.isEmpty) {
-      return false;
-    }
-
-    final newType = _detectProductType(text);
-
-    return newType != null &&
-        _normalise(newType) != old;
-  }
-
-  // -------------------------------------------------------------------------
-  // ENTITY DETECTION
-  // -------------------------------------------------------------------------
-
-  String? _detectCategory(String text) {
-    final normalized = _normalise(text);
-
-    for (final entry in _categoryAliases.entries) {
-      for (final alias in entry.value) {
-        if (_containsPhrase(
-          normalized,
-          alias,
-        )) {
-          return entry.key;
-        }
-      }
-    }
-
-    // Natural descriptions frequently imply a category through the item.
-    final type = _detectProductType(normalized);
-
-    if (type != null) {
-      if (_jewelleryTypes.contains(type)) {
-        return 'Jewellery';
-      }
-
-      if (_homeDecorTypes.contains(type)) {
-        return 'Home Decor';
-      }
-
-      if (_bagTypes.contains(type)) {
-        return 'Bags';
-      }
-
-      if (_clothingTypes.contains(type)) {
-        return 'Clothing';
-      }
-    }
-
-    return null;
-  }
-
-  String? _detectProductType(String text) {
-    final normalized = _normalise(text);
-
-    String? bestType;
-    int bestLength = 0;
-
-    for (final entry in _productTypeAliases.entries) {
-      for (final alias in entry.value) {
-        if (_containsPhrase(
-          normalized,
-          alias,
-        )) {
-          if (alias.length > bestLength) {
-            bestType = entry.key;
-            bestLength = alias.length;
-          }
-        }
-      }
-    }
-
-    return bestType;
-  }
-
-  String? _detectOccasion(String text) {
-    final normalized = _normalise(text);
-
-    for (final entry in _occasionAliases.entries) {
-      for (final alias in entry.value) {
-        if (_containsPhrase(
-          normalized,
-          alias,
-        )) {
-          return entry.key;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  List<String> _detectMaterials(String text) {
-    final normalized = _normalise(text);
-    final result = <String>[];
-
-    for (final entry in _materialAliases.entries) {
-      if (entry.value.any(
-        (alias) => _containsPhrase(
-          normalized,
-          alias,
-        ),
-      )) {
-        result.add(entry.key);
-      }
-    }
-
-    return result;
-  }
-
-  List<String> _detectColours(String text) {
-    final normalized = _normalise(text);
-    final result = <String>[];
-
-    for (final colour in _commonColours) {
-      if (_containsPhrase(
-        normalized,
-        colour,
-      )) {
-        result.add(colour);
-      }
-    }
-
-    return result;
-  }
-
-  List<String> _detectStyles(String text) {
-    final normalized = _normalise(text);
-    final result = <String>[];
-
-    for (final entry in _attributeAliases.entries) {
-      if (entry.key == 'handmade') {
-        continue;
-      }
-
-      if (entry.value.any(
-        (alias) => _containsPhrase(
-          normalized,
-          alias,
-        ),
-      )) {
-        result.add(entry.key);
-      }
-    }
-
-    return result;
-  }
-
-  bool _containsHandmade(String text) {
-    final normalized = _normalise(text);
-
-    return _attributeAliases['handmade']!.any(
-      (word) => _containsPhrase(
-        normalized,
-        word,
-      ),
+    return values.contains(
+      text,
     );
   }
 
-  // -------------------------------------------------------------------------
-  // PRODUCT SEARCH
-  // -------------------------------------------------------------------------
+  // ============================================================
+  // RESET
+  // ============================================================
 
-  Future<List<Map<String, dynamic>>> _findMatchingProducts(
-    Map<String, dynamic> intent, {
-    bool excludeShown = false,
+  bool _isResetRequest(
+    String text,
+  ) {
+    const values = {
+      'start over',
+      'start again',
+      'reset',
+      'clear',
+      'forget that',
+      'never mind',
+      'nevermind',
+      'forget it',
+    };
+
+    return values.contains(
+      text,
+    );
+  }
+
+  void _resetShoppingState() {
+    _lastIntent = null;
+
+    _shownProducts = [];
+
+    _shownProductIds.clear();
+
+    _pendingCartProducts.clear();
+
+    _awaitingCartConfirmation =
+        false;
+
+    _awaitingProductSelection =
+        false;
+  }
+
+  // ============================================================
+  // CLEAR DISPLAYED PRODUCTS
+  // ============================================================
+
+  void _clearDisplayedProducts() {
+    _shownProducts = <Map<String, dynamic>>[];
+    _shownProductIds.clear();
+  }
+
+  // ============================================================
+  // RESPONSE
+  // ============================================================
+
+  Future<void> _respond(
+    String text, {
+    List<String> choices = const [],
+    bool showCartButton = false,
   }) async {
-    final snapshot =
-        await FirebaseFirestore.instance
-            .collection('products')
-            .where(
-              'isAvailable',
-              isEqualTo: true,
-            )
-            .get();
+    if (!mounted) return;
 
-    final List<_ScoredProduct> scoredProducts = [];
+    setState(() {
+      _isTyping = false;
 
-    for (final doc in snapshot.docs) {
-      final data =
-          Map<String, dynamic>.from(
-        doc.data(),
-      );
-
-      data['documentId'] = doc.id;
-
-      if (excludeShown &&
-          _shownProductIds.contains(
-            doc.id,
-          )) {
-        continue;
-      }
-
-      // -------------------------------------------------------------
-      // STRICT PRODUCT TYPE
-      //
-      // If the user asks for bangles, do not return necklaces merely
-      // because they are jewellery.
-      // -------------------------------------------------------------
-
-      final requestedType =
-          _normalise(intent['productType']);
-
-      if (requestedType.isNotEmpty &&
-          !_matchesProductType(
-            data,
-            requestedType,
-          )) {
-        continue;
-      }
-
-      // -------------------------------------------------------------
-      // STRICT CATEGORY
-      // -------------------------------------------------------------
-
-      final requestedCategory =
-          _normalise(intent['category']);
-
-      if (requestedCategory.isNotEmpty &&
-          !_matchesCategory(
-            data,
-            requestedCategory,
-          )) {
-        continue;
-      }
-
-      // -------------------------------------------------------------
-      // HANDMADE FILTER
-      // -------------------------------------------------------------
-
-      if (intent['handmade'] == true &&
-          !_isHandmadeProduct(data)) {
-        continue;
-      }
-
-      // -------------------------------------------------------------
-      // FILTERS
-      // -------------------------------------------------------------
-
-      final requiredMaterials =
-          _stringList(intent['material']);
-
-      final requiredColours =
-          _stringList(intent['colour']);
-
-      final requiredStyles =
-          _stringList(intent['style']);
-
-      final requiredOccasions =
-          _stringList(intent['occasion']);
-
-      // These are true filters, not just ranking hints.
-      if (requiredMaterials.isNotEmpty &&
-          !_matchesAnyField(
-            data,
-            'material',
-            requiredMaterials,
-          )) {
-        continue;
-      }
-
-      if (requiredColours.isNotEmpty &&
-          !_matchesAnyField(
-            data,
-            'colour',
-            requiredColours,
-          )) {
-        continue;
-      }
-
-      if (requiredStyles.isNotEmpty &&
-          !_matchesAnyField(
-            data,
-            'style',
-            requiredStyles,
-          )) {
-        continue;
-      }
-
-      if (requiredOccasions.isNotEmpty &&
-          !_matchesOccasion(
-            data,
-            requiredOccasions,
-          )) {
-        continue;
-      }
-
-      final score =
-          _calculateIntentScore(
-        product: data,
-        intent: intent,
-      );
-
-      if (score <= 0) {
-        continue;
-      }
-
-      scoredProducts.add(
-        _ScoredProduct(
-          product: data,
-          score: score,
+      _messages.add(
+        _ChatMessage(
+          text: text,
+          isUser: false,
+          choices: choices,
+          showCartButton:
+              showCartButton,
         ),
       );
-    }
 
-    scoredProducts.sort(
-      (a, b) {
-        final scoreCompare =
-            b.score.compareTo(
-          a.score,
-        );
+      _conversation.add({
+        'role': 'assistant',
+        'text': text,
+      });
+    });
 
-        if (scoreCompare != 0) {
-          return scoreCompare;
-        }
-
-        return _normalise(
-          a.product['title'],
-        ).compareTo(
-          _normalise(
-            b.product['title'],
-          ),
-        );
-      },
-    );
-
-    return scoredProducts
-        .take(5)
-        .map(
-          (item) => item.product,
-        )
-        .toList();
+    _scrollToBottom();
   }
 
-  bool _matchesProductType(
-    Map<String, dynamic> product,
-    String requestedType,
-  ) {
-    final requested =
-        _normalise(requestedType);
+  // ============================================================
+  // SHOW PRODUCTS
+  // ============================================================
 
-    final fields = <String>[
-      _normalise(product['productType']),
-      _normalise(product['subcategory']),
-      _normalise(product['title']),
-    ];
+  Future<void> _showProducts(
+    List<Map<String, dynamic>>
+        products,
+    String response,
+  ) async {
+    if (!mounted) return;
 
-    final aliases =
-        _productTypeAliasesFor(
-      requested,
-    );
+    setState(() {
+      _isTyping = false;
 
-    if (aliases.isEmpty) {
-      return fields.any(
-        (field) =>
-            field == requested ||
-            field.contains(requested),
-      );
-    }
+      _shownProducts =
+          products;
 
-    return aliases.any(
-      (alias) => fields.any(
-        (field) =>
-            field == alias ||
-            field.contains(alias),
-      ),
-    );
-  }
-
-  bool _matchesCategory(
-    Map<String, dynamic> product,
-    String requestedCategory,
-  ) {
-    final requested =
-        _normalise(requestedCategory);
-
-    final category =
-        _normalise(product['category']);
-
-    final sellerCategory =
-        _normalise(product['sellerCategory']);
-
-    final text =
-        _buildProductText(product);
-
-    final aliases =
-        _categoryAliasesFor(
-      requested,
-    );
-
-    if (aliases.any(
-      (alias) =>
-          category == alias ||
-          sellerCategory == alias,
-    )) {
-      return true;
-    }
-
-    // Catalogs can have slightly different category names, so fall back
-    // to semantic category evidence only after exact alias checking.
-    if (requested == 'jewellery') {
-      return _containsAny(
-        text,
-        [
-          'jewellery',
-          'jewelry',
-          'bangle',
-          'necklace',
-          'earring',
-          'bracelet',
-        ],
-      );
-    }
-
-    if (requested == 'home decor') {
-      return _containsAny(
-        text,
-        [
-          'home decor',
-          'home decoration',
-          'table cloth',
-          'tablecloth',
-          'table runner',
-          'basket',
-          'lantern',
-          'candle holder',
-          'wall hanging',
-          'flower vase',
-          'clay pot',
-          'decor',
-        ],
-      );
-    }
-
-    if (requested == 'clothing') {
-      return _containsAny(
-        text,
-        [
-          'clothing',
-          'apparel',
-          'dress',
-          'saree',
-          'sari',
-          'kurta',
-          'shirt',
-          'scarf',
-          'dupatta',
-        ],
-      );
-    }
-
-    if (requested == 'kitchenware') {
-      return _containsAny(
-        text,
-        [
-          'kitchen',
-          'utensil',
-          'utensils',
-          'serving',
-          'cookware',
-        ],
-      );
-    }
-
-    if (requested == 'bags') {
-      return _containsAny(
-        text,
-        [
-          'bag',
-          'handbag',
-          'tote',
-          'purse',
-        ],
-      );
-    }
-
-    if (requested == 'pottery') {
-      return _containsAny(
-        text,
-        [
-          'pottery',
-          'pot',
-          'clay',
-          'terracotta',
-          'ceramic',
-        ],
-      );
-    }
-
-    return text.contains(requested);
-  }
-
-  List<String> _categoryAliasesFor(
-    String category,
-  ) {
-    final normalized =
-        _normalise(category);
-
-    for (final entry in _categoryAliases.entries) {
-      if (_normalise(entry.key) ==
-          normalized) {
-        return entry.value
-            .map(_normalise)
-            .toList();
-      }
-    }
-
-    return [
-      normalized,
-    ];
-  }
-
-  List<String> _productTypeAliasesFor(
-    String type,
-  ) {
-    final normalized =
-        _normalise(type);
-
-    for (final entry in _productTypeAliases.entries) {
-      if (_normalise(entry.key) ==
-          normalized) {
-        return entry.value
-            .map(_normalise)
-            .toList();
-      }
-    }
-
-    return [
-      normalized,
-    ];
-  }
-
-  bool _matchesAnyField(
-    Map<String, dynamic> product,
-    String field,
-    List<String> requested,
-  ) {
-    final values =
-        _stringList(product[field]);
-
-    if (values.isEmpty) {
-      // Also inspect searchable text because seller/AI metadata can
-      // occasionally be incomplete.
-      final text =
-          _buildProductText(product);
-
-      return requested.any(
-        (value) => text.contains(
-          _normalise(value),
+      _messages.add(
+        _ChatMessage(
+          text: response,
+          isUser: false,
         ),
       );
-    }
 
-    return requested.any(
-      (target) => values.any(
-        (value) =>
-            value == _normalise(target) ||
-            value.contains(
-              _normalise(target),
-            ) ||
-            _normalise(target).contains(
-              value,
-            ),
-      ),
-    );
+      _conversation.add({
+        'role': 'assistant',
+        'text': response,
+      });
+    });
+
+    _scrollToBottom();
   }
 
-  bool _matchesOccasion(
-    Map<String, dynamic> product,
-    List<String> requested,
+  // ============================================================
+  // FOUND RESPONSE
+  // ============================================================
+
+  String _foundProductsResponse(
+    List<Map<String, dynamic>>
+        products,
+    Map<String, dynamic> intent,
   ) {
-    final occasions =
-        _stringList(product['occasion']);
+    final count =
+        products.length;
 
-    final useCases =
-        _stringList(product['useCases']);
+    if (count == 1) {
+      return "I found 1 product that matches your request.";
+    }
 
-    final text =
-        _buildProductText(product);
-
-    return requested.any(
-      (target) {
-        final normalizedTarget =
-            _normalise(target);
-
-        if (occasions.any(
-          (value) => value == normalizedTarget ||
-              value.contains(normalizedTarget) ||
-              normalizedTarget.contains(value),
-        )) {
-          return true;
-        }
-
-        if (useCases.any(
-          (value) => value.contains(
-            normalizedTarget,
-          ),
-        )) {
-          return true;
-        }
-
-        // Wedding/festive products may be catalogued as festive or
-        // cultural rather than literally "wedding".
-        if (normalizedTarget == 'wedding') {
-          return text.contains('festive') ||
-              text.contains('bridal') ||
-              text.contains('wedding') ||
-              text.contains('cultural');
-        }
-
-        return false;
-      },
-    );
+    return "I found $count products that match your request.";
   }
 
-  int _calculateIntentScore({
-    required Map<String, dynamic> product,
-    required Map<String, dynamic> intent,
-  }) {
-    int score = 0;
-
-    final title =
-        _normalise(product['title']);
-
-    final description =
-        _normalise(product['description']);
-
-    final productCategory =
-        _normalise(product['category']);
-
-    final subcategory =
-        _normalise(product['subcategory']);
-
-    final productType =
-        _normalise(product['productType']);
-
-    final text =
-        _buildProductText(product);
-
-    final tags =
-        _stringList(product['tags']);
-
-    final keywords =
-        _stringList(product['keywords']);
-
-    final searchTerms =
-        _stringList(product['searchTerms']);
-
-    final materials =
-        _stringList(product['material']);
-
-    final colours =
-        _stringList(product['colour']);
-
-    final styles =
-        _stringList(product['style']);
-
-    final occasions =
-        _stringList(product['occasion']);
-
-    final useCases =
-        _stringList(product['useCases']);
-
-    final requestedCategory =
-        _normalise(intent['category']);
-
-    final requestedType =
-        _normalise(intent['productType']);
-
-    final requestedSubcategory =
-        _normalise(intent['subcategory']);
-
-    if (requestedCategory.isNotEmpty &&
-        _matchesCategory(
-          product,
-          requestedCategory,
-        )) {
-      score += 100;
-    }
-
-    if (requestedType.isNotEmpty &&
-        _matchesProductType(
-          product,
-          requestedType,
-        )) {
-      score += 180;
-    }
-
-    if (requestedSubcategory.isNotEmpty &&
-        (subcategory ==
-                requestedSubcategory ||
-            subcategory.contains(
-              requestedSubcategory,
-            ))) {
-      score += 80;
-    }
-
-    for (final material
-        in _stringList(intent['material'])) {
-      if (_containsFlexible(
-        materials,
-        material,
-      )) {
-        score += 50;
-      } else if (text.contains(
-        _normalise(material),
-      )) {
-        score += 20;
-      }
-    }
-
-    for (final colour
-        in _stringList(intent['colour'])) {
-      if (_containsFlexible(
-        colours,
-        colour,
-      )) {
-        score += 50;
-      } else if (text.contains(
-        _normalise(colour),
-      )) {
-        score += 20;
-      }
-    }
-
-    for (final style
-        in _stringList(intent['style'])) {
-      if (_containsFlexible(
-        styles,
-        style,
-      )) {
-        score += 40;
-      } else if (text.contains(
-        _normalise(style),
-      )) {
-        score += 15;
-      }
-    }
-
-    for (final occasion
-        in _stringList(intent['occasion'])) {
-      if (_containsFlexible(
-        occasions,
-        occasion,
-      )) {
-        score += 50;
-      } else if (_containsFlexible(
-        useCases,
-        occasion,
-      )) {
-        score += 30;
-      } else if (_matchesOccasion(
-        product,
-        [occasion],
-      )) {
-        score += 20;
-      }
-    }
-
-    for (final keyword
-        in _stringList(intent['keywords'])) {
-      final k = _normalise(keyword);
-
-      if (k.isEmpty) continue;
-
-      if (title.contains(k)) {
-        score += 35;
-      }
-
-      if (productType.contains(k)) {
-        score += 30;
-      }
-
-      if (productCategory.contains(k)) {
-        score += 20;
-      }
-
-      if (keywords.any(
-        (value) => value.contains(k),
-      )) {
-        score += 25;
-      }
-
-      if (searchTerms.any(
-        (value) => value.contains(k),
-      )) {
-        score += 20;
-      }
-
-      if (tags.any(
-        (value) => value.contains(k),
-      )) {
-        score += 15;
-      }
-
-      if (description.contains(k)) {
-        score += 8;
-      }
-    }
-
-    // A product should receive a little relevance for being a genuine
-    // handmade/artisan product even if the seller metadata is sparse.
-    if (intent['handmade'] == true &&
-        _isHandmadeProduct(product)) {
-      score += 20;
-    }
-
-    // Small title bonus makes exact product names rank above generic matches.
-    if (requestedType.isNotEmpty &&
-        title.contains(requestedType)) {
-      score += 20;
-    }
-
-    return score;
-  }
-
-  // -------------------------------------------------------------------------
-  // NO-RESULTS / RESPONSE HANDLING
-  // -------------------------------------------------------------------------
+  // ============================================================
+  // NO RESULTS
+  // ============================================================
 
   String _noResultsResponse(
     Map<String, dynamic> intent,
@@ -2053,829 +2865,44 @@ class _AIAssistantState extends State<AIAssistant> {
             ?.toString()
             .trim();
 
-    final filters = <String>[];
-
-    final colours =
-        _stringList(intent['colour']);
-
-    final materials =
-        _stringList(intent['material']);
-
-    final occasions =
-        _stringList(intent['occasion']);
-
-    if (colours.isNotEmpty) {
-      filters.add(
-        colours.join(', '),
-      );
-    }
-
-    if (materials.isNotEmpty) {
-      filters.add(
-        materials.join(', '),
-      );
-    }
-
-    if (occasions.isNotEmpty) {
-      filters.add(
-        occasions.join(', '),
-      );
-    }
-
-    final itemName =
-        type?.isNotEmpty == true
-            ? type!
-            : category?.isNotEmpty == true
-                ? category!
+    final item =
+        type != null &&
+                type.isNotEmpty
+            ? type
+            : category != null &&
+                    category.isNotEmpty
+                ? category
                 : 'products';
 
-    if (filters.isNotEmpty) {
-      return "I couldn't find an exact match for $itemName with ${filters.join(' and ')} right now. Would you like to remove one filter, change the product type, or broaden the search?";
-    }
-
-    return "I couldn't find a matching $itemName in the marketplace right now. Would you like to try a different product type or category?";
+    return "I couldn't find a matching $item right now. "
+        "Would you like to try a different colour, material, budget, or product type?";
   }
 
-  String _fallbackResponse(
-    List<Map<String, dynamic>> products,
-    Map<String, dynamic> intent,
-  ) {
-    if (products.isEmpty) {
-      return _noResultsResponse(
-        intent,
-      );
-    }
-
-    final productType =
-        intent['productType']
-            ?.toString()
-            .trim();
-
-    final category =
-        intent['category']
-            ?.toString()
-            .trim();
-
-    if (productType != null &&
-        productType.isNotEmpty) {
-      return "I found ${products.length} ${_displayName(productType)} options that match what you're looking for.";
-    }
-
-    if (category != null &&
-        category.isNotEmpty) {
-      return "I found ${products.length} ${category.toLowerCase()} options that match what you're looking for.";
-    }
-
-    return "I found ${products.length} handmade products that may be a good match.";
-  }
-
-  Future<void> _respondWithoutSearch(
-    String response,
-  ) async {
-    if (!mounted) return;
-
-    setState(() {
-      _isTyping = false;
-
-      _messages.add(
-        _ChatMessage(
-          text: response,
-          isUser: false,
-        ),
-      );
-
-      _conversation.add({
-        'role': 'assistant',
-        'text': response,
-      });
-
-      _recommendedProducts = [];
-    });
-
-    _scrollToBottom();
-  }
-
-  Future<void> _showProducts(
-    List<Map<String, dynamic>> products,
-    String response,
-  ) async {
-    if (!mounted) return;
-
-    setState(() {
-      _isTyping = false;
-      _recommendedProducts = products;
-
-      _messages.add(
-        _ChatMessage(
-          text: response,
-          isUser: false,
-        ),
-      );
-
-      _conversation.add({
-        'role': 'assistant',
-        'text': response,
-      });
-    });
-
-    _scrollToBottom();
-  }
-
-  // -------------------------------------------------------------------------
-  // PRODUCT HELPERS
-  // -------------------------------------------------------------------------
-
-  String _productId(
-    Map<String, dynamic> product,
-  ) {
-    final id =
-        product['documentId'] ??
-            product['productId'] ??
-            product['id'] ??
-            product['title'] ??
-            '';
-
-    return id.toString();
-  }
-
-  bool _isHandmadeProduct(
-    Map<String, dynamic> product,
-  ) {
-    final values = <String>[
-      _normalise(product['title']),
-      _normalise(product['description']),
-      _normalise(product['category']),
-      _normalise(product['sellerCategory']),
-      ..._stringList(product['tags']),
-      ..._stringList(product['keywords']),
-      ..._stringList(product['searchTerms']),
-      ..._stringList(product['style']),
-    ];
-
-    const handmadeWords = [
-      'handmade',
-      'handcrafted',
-      'hand made',
-      'hand crafted',
-      'artisan',
-      'artisan made',
-      'artisan-made',
-      'locally made',
-      'crafted',
-    ];
-
-    return values.any(
-      (value) => handmadeWords.any(
-        (word) => value.contains(
-          word,
-        ),
-      ),
-    );
-  }
-
-  String _buildProductText(
-    Map<String, dynamic> product,
-  ) {
-    final values = <String>[
-      _normalise(product['title']),
-      _normalise(product['description']),
-      _normalise(product['category']),
-      _normalise(product['subcategory']),
-      _normalise(product['productType']),
-      _normalise(product['sellerCategory']),
-      ..._stringList(product['tags']),
-      ..._stringList(product['keywords']),
-      ..._stringList(product['searchTerms']),
-      ..._stringList(product['material']),
-      ..._stringList(product['colour']),
-      ..._stringList(product['style']),
-      ..._stringList(product['occasion']),
-      ..._stringList(product['useCases']),
-    ];
-
-    return values
-        .where(
-          (value) => value.isNotEmpty,
-        )
-        .join(' ');
-  }
-
-  bool _containsAny(
-    String text,
-    List<String> values,
-  ) {
-    return values.any(
-      (value) => text.contains(
-        _normalise(value),
-      ),
-    );
-  }
-
-  bool _containsFlexible(
-    List<String> values,
-    String target,
-  ) {
-    final normalizedTarget =
-        _normalise(target);
-
-    return values.any(
-      (value) =>
-          value == normalizedTarget ||
-          value.contains(
-            normalizedTarget,
-          ) ||
-          normalizedTarget.contains(
-            value,
-          ),
-    );
-  }
-
-  bool _containsPhrase(
-    String text,
-    String phrase,
-  ) {
-    final normalizedText =
-        _normalise(text);
-
-    final normalizedPhrase =
-        _normalise(phrase);
-
-    if (normalizedPhrase.isEmpty) {
-      return false;
-    }
-
-    // Use word boundaries so "bag" does not accidentally match unrelated
-    // words merely because the characters occur inside them.
-    final escaped =
-        RegExp.escape(normalizedPhrase)
-            .replaceAll(
-              r'\ ',
-              r'\s+',
-            );
-
-    return RegExp(
-      r'(^|\s)' +
-          escaped +
-          r'($|\s)',
-      caseSensitive: false,
-    ).hasMatch(
-      normalizedText,
-    );
-  }
-
-  bool _hasNonEmpty(dynamic value) {
-    return value != null &&
-        value.toString().trim().isNotEmpty;
-  }
-
-  List<String> _mergeList(
-    List<String> first,
-    List<String> second,
-  ) {
-    return {
-      ...first.map(_normalise),
-      ...second.map(_normalise),
-    }.where(
-      (value) => value.isNotEmpty,
-    ).toList();
-  }
-
-  List<String> _stringList(
-    dynamic value,
-  ) {
-    if (value is! List) {
-      return [];
-    }
-
-    return value
-        .map(
-          (item) => _normalise(item),
-        )
-        .where(
-          (item) => item.isNotEmpty,
-        )
-        .toSet()
-        .toList();
-  }
-
-  String _normalise(
-    dynamic value,
-  ) {
-    if (value == null) {
-      return '';
-    }
-
-    return value
-        .toString()
-        .toLowerCase()
-        .trim()
-        .replaceAll(
-          RegExp(r'[^\w\s-]'),
-          ' ',
-        )
-        .replaceAll(
-          RegExp(r'\s+'),
-          ' ',
-        )
-        .trim();
-  }
-
-  String _displayName(
-    String value,
-  ) {
-    final normalized =
-        _normalise(value);
-
-    switch (normalized) {
-      case 'table cloth':
-        return 'table cloth';
-      case 'table runner':
-        return 'table runner';
-      case 'flower vase':
-        return 'flower vase';
-      case 'candle holder':
-        return 'candle holder';
-      case 'clay pot':
-        return 'clay pot';
-      case 'kitchen utensils':
-        return 'kitchen utensils';
-      default:
-        return value;
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // NAVIGATION / SUGGESTIONS / SCROLL
-  // -------------------------------------------------------------------------
-
-  void _openProduct(
-    Map<String, dynamic> product,
-  ) {
-    final productTitle =
-        (product['title'] ?? '')
-            .toString();
-
-    final productDescription =
-        (product['description'] ?? '')
-            .toString();
-
-    final productPrice =
-        (product['price'] ?? '0')
-            .toString();
-
-    final productImage =
-        (product['imageUrl'] ??
-                product['image'] ??
-                '')
-            .toString()
-            .replaceAll(
-              '"',
-              '',
-            );
-
-    final sellerName =
-        (product['sellerName'] ?? '')
-                .toString()
-                .trim()
-                .isNotEmpty
-            ? product['sellerName']
-                .toString()
-                .trim()
-            : 'Local Artisan';
-
-    final sellerId =
-        (product['sellerId'] ?? '')
-            .toString();
-
-    final productData =
-        <String, String>{
-      'title': productTitle,
-      'description':
-          productDescription,
-      'price': productPrice,
-      'imageUrl': productImage,
-      'sellerName': sellerName,
-      'sellerId': sellerId,
-    };
-
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        transitionDuration:
-            const Duration(
-          milliseconds: 220,
-        ),
-        reverseTransitionDuration:
-            const Duration(
-          milliseconds: 180,
-        ),
-        pageBuilder:
-            (
-          context,
-          animation,
-          secondaryAnimation,
-        ) {
-          return ProductDetailPage(
-            product: productData,
-          );
-        },
-        transitionsBuilder:
-            (
-          context,
-          animation,
-          secondaryAnimation,
-          child,
-        ) {
-          final curvedAnimation =
-              CurvedAnimation(
-            parent: animation,
-            curve:
-                Curves.easeOutCubic,
-          );
-
-          return FadeTransition(
-            opacity:
-                curvedAnimation,
-            child:
-                SlideTransition(
-              position:
-                  Tween<Offset>(
-                begin:
-                    const Offset(
-                  0.04,
-                  0,
-                ),
-                end:
-                    Offset.zero,
-              ).animate(
-                curvedAnimation,
-              ),
-              child: child,
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  void _useSuggestion(
-    String text,
-  ) {
-    _controller.text =
-        text;
-
-    _controller.selection =
-        TextSelection.fromPosition(
-      TextPosition(
-        offset:
-            _controller.text.length,
-      ),
-    );
-
-    _inputFocusNode
-        .requestFocus();
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance
-        .addPostFrameCallback(
-      (_) {
-        if (!_scrollController
-            .hasClients) {
-          return;
-        }
-
-        _scrollController.animateTo(
-          _scrollController
-              .position
-              .maxScrollExtent,
-          duration:
-              const Duration(
-            milliseconds: 300,
-          ),
-          curve:
-              Curves.easeOut,
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(
-    BuildContext context,
-  ) {
-    final keyboardHeight =
-        MediaQuery.of(context)
-            .viewInsets
-            .bottom;
-
-    return Stack(
-      children: [
-        Positioned(
-          left: 14,
-          right: 14,
-          bottom:
-              keyboardHeight > 0
-                  ? keyboardHeight + 10
-                  : 82,
-          child: Material(
-            color:
-                Colors.transparent,
-            child: Container(
-              height:
-                  keyboardHeight > 0
-                      ? MediaQuery.of(
-                              context,
-                            )
-                          .size
-                          .height *
-                          0.55
-                      : MediaQuery.of(
-                              context,
-                            )
-                          .size
-                          .height *
-                          0.60,
-              constraints:
-                  const BoxConstraints(
-                maxHeight: 620,
-                minHeight: 350,
-              ),
-              decoration:
-                  BoxDecoration(
-                color:
-                    Colors.white,
-                borderRadius:
-                    BorderRadius.circular(
-                  28,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black
-                        .withOpacity(
-                      0.16,
-                    ),
-                    blurRadius: 35,
-                    offset:
-                        const Offset(
-                      0,
-                      12,
-                    ),
-                  ),
-                ],
-                border:
-                    Border.all(
-                  color: Colors.black
-                      .withOpacity(
-                    0.06,
-                  ),
-                ),
-              ),
-              child: ClipRRect(
-                borderRadius:
-                    BorderRadius.circular(
-                  28,
-                ),
-                child: Column(
-                  children: [
-                    _buildHeader(),
-                    Expanded(
-                      child:
-                          _buildChatArea(),
-                    ),
-                    _buildInputArea(),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding:
-          const EdgeInsets.fromLTRB(
-        18,
-        16,
-        12,
-        15,
-      ),
-      decoration:
-          const BoxDecoration(
-        gradient:
-            LinearGradient(
-          colors: [
-            Color(0xFFFF8A3D),
-            Color(0xFFD66A16),
-          ],
-          begin:
-              Alignment.topLeft,
-          end:
-              Alignment.bottomRight,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration:
-                BoxDecoration(
-              color: Colors.white
-                  .withOpacity(
-                0.18,
-              ),
-              borderRadius:
-                  BorderRadius.circular(
-                14,
-              ),
-            ),
-            child: const Icon(
-              Icons.auto_awesome,
-              color:
-                  Colors.white,
-              size: 22,
-            ),
-          ),
-          const SizedBox(
-            width: 12,
-          ),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
-              children: [
-                Text(
-                  "Karigari Assistant",
-                  style:
-                      TextStyle(
-                    color:
-                        Colors.white,
-                    fontSize:
-                        16,
-                    fontWeight:
-                        FontWeight.w800,
-                  ),
-                ),
-                SizedBox(
-                  height: 3,
-                ),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.circle,
-                      color:
-                          Color(
-                        0xFFB8FFCB,
-                      ),
-                      size: 7,
-                    ),
-                    SizedBox(
-                      width: 5,
-                    ),
-                    Text(
-                      "Shopping assistant",
-                      style:
-                          TextStyle(
-                        color:
-                            Colors.white70,
-                        fontSize:
-                            11,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: () {
-              Navigator.of(
-                context,
-              ).pop();
-            },
-            icon:
-                const Icon(
-              Icons
-                  .close_rounded,
-              color:
-                  Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChatArea() {
-    return Container(
-      color:
-          const Color(
-        0xFFFAFAFA,
-      ),
-      child: Column(
-        children: [
-          if (_messages.length <=
-              1)
-            _buildSuggestions(),
-          Expanded(
-            child:
-                ListView.builder(
-              controller:
-                  _scrollController,
-              padding:
-                  const EdgeInsets
-                      .fromLTRB(
-                15,
-                10,
-                15,
-                15,
-              ),
-              itemCount:
-                  _messages.length +
-                  (_isTyping
-                      ? 1
-                      : 0) +
-                  (_recommendedProducts
-                          .isNotEmpty
-                      ? 1
-                      : 0),
-              itemBuilder:
-                  (
-                context,
-                index,
-              ) {
-                if (_isTyping &&
-                    index ==
-                        _messages
-                            .length) {
-                  return _buildTypingIndicator();
-                }
-
-                final recommendationIndex =
-                    _messages
-                            .length +
-                        (_isTyping
-                            ? 1
-                            : 0);
-
-                if (_recommendedProducts
-                        .isNotEmpty &&
-                    index ==
-                        recommendationIndex) {
-                  return _buildRecommendations();
-                }
-
-                return _buildMessage(
-                  _messages[index],
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecommendations() {
-    return Column(
-      children:
-          _recommendedProducts
-              .map(
-                (product) =>
-                    _buildProductCard(
-                  product,
-                ),
-              )
-              .toList(),
-    );
-  }
+  // ============================================================
+  // PRODUCT CARD
+  // ============================================================
 
   Widget _buildProductCard(
     Map<String, dynamic> product,
   ) {
     final title =
-        (product['title'] ?? '')
-            .toString();
+        _productTitle(
+      product,
+    );
 
     final price =
-        (product['price'] ?? '0')
+        (product['price'] ??
+                '0')
             .toString();
 
     final imageUrl =
-        (product['imageUrl'] ??
-                product['image'] ??
-                '')
-            .toString()
-            .replaceAll(
-              '"',
-              '',
-            );
+        _productImage(
+      product,
+    );
 
     final seller =
-        (product['sellerName'] ?? '')
+        (product['sellerName'] ??
+                '')
             .toString()
             .trim();
 
@@ -2888,7 +2915,7 @@ class _AIAssistantState extends State<AIAssistant> {
       child: Container(
         margin:
             const EdgeInsets.only(
-          bottom: 10,
+          bottom: 12,
         ),
         padding:
             const EdgeInsets.all(
@@ -2896,14 +2923,12 @@ class _AIAssistantState extends State<AIAssistant> {
         ),
         decoration:
             BoxDecoration(
-          color:
-              Colors.white,
+          color: Colors.white,
           borderRadius:
               BorderRadius.circular(
             16,
           ),
-          border:
-              Border.all(
+          border: Border.all(
             color: Colors.black
                 .withOpacity(
               0.06,
@@ -2913,13 +2938,13 @@ class _AIAssistantState extends State<AIAssistant> {
             BoxShadow(
               color: Colors.black
                   .withOpacity(
-                0.035,
+                0.06,
               ),
-              blurRadius: 10,
+              blurRadius: 12,
               offset:
                   const Offset(
                 0,
-                4,
+                5,
               ),
             ),
           ],
@@ -2932,17 +2957,13 @@ class _AIAssistantState extends State<AIAssistant> {
                 12,
               ),
               child: SizedBox(
-                width: 68,
-                height: 68,
+                width: 72,
+                height: 72,
                 child:
                     imageUrl.isNotEmpty
                         ? Image.network(
                             imageUrl,
-                            fit:
-                                BoxFit.cover,
-                            filterQuality:
-                                FilterQuality
-                                    .low,
+                            fit: BoxFit.cover,
                             errorBuilder:
                                 (
                               context,
@@ -2983,26 +3004,20 @@ class _AIAssistantState extends State<AIAssistant> {
               width: 11,
             ),
             Expanded(
-              child:
-                  Column(
+              child: Column(
                 crossAxisAlignment:
-                    CrossAxisAlignment
-                        .start,
+                    CrossAxisAlignment.start,
                 children: [
                   Text(
                     title,
-                    maxLines:
-                        2,
+                    maxLines: 2,
                     overflow:
-                        TextOverflow
-                            .ellipsis,
+                        TextOverflow.ellipsis,
                     style:
                         const TextStyle(
-                      fontSize:
-                          13,
+                      fontSize: 13,
                       fontWeight:
-                          FontWeight
-                              .w700,
+                          FontWeight.w700,
                       color:
                           Color(
                         0xFF222222,
@@ -3012,19 +3027,15 @@ class _AIAssistantState extends State<AIAssistant> {
                   const SizedBox(
                     height: 5,
                   ),
-                  if (seller
-                      .isNotEmpty)
+                  if (seller.isNotEmpty)
                     Text(
                       seller,
-                      maxLines:
-                          1,
+                      maxLines: 1,
                       overflow:
-                          TextOverflow
-                              .ellipsis,
+                          TextOverflow.ellipsis,
                       style:
                           const TextStyle(
-                        fontSize:
-                            10,
+                        fontSize: 10,
                         color:
                             Color(
                           0xFF888888,
@@ -3038,11 +3049,9 @@ class _AIAssistantState extends State<AIAssistant> {
                     '₹$price',
                     style:
                         const TextStyle(
-                      fontSize:
-                          13,
+                      fontSize: 13,
                       fontWeight:
-                          FontWeight
-                              .w800,
+                          FontWeight.w800,
                       color:
                           Color(
                         0xFFD66A16,
@@ -3081,30 +3090,138 @@ class _AIAssistantState extends State<AIAssistant> {
     );
   }
 
+  // ============================================================
+  // PRODUCT TITLE
+  // ============================================================
+
+  String _productTitle(
+    Map<String, dynamic> product,
+  ) {
+    return (
+      product['title'] ??
+      ''
+    ).toString();
+  }
+
+  // ============================================================
+  // PRODUCT IMAGE
+  // ============================================================
+
+  String _productImage(
+    Map<String, dynamic> product,
+  ) {
+    return (
+      product['imageUrl'] ??
+      product['image'] ??
+      ''
+    )
+        .toString()
+        .replaceAll(
+          '"',
+          '',
+        )
+        .trim();
+  }
+
+  // ============================================================
+  // PRODUCT ID
+  // ============================================================
+
+  String _productId(
+    Map<String, dynamic> product,
+  ) {
+    return (
+      product['documentId'] ??
+      product['productId'] ??
+      product['id'] ??
+      ''
+    ).toString();
+  }
+
+  // ============================================================
+  // OPEN PRODUCT
+  // ============================================================
+
+  void _openProduct(
+    Map<String, dynamic> product,
+  ) {
+    final productData =
+        <String, String>{
+      'title':
+          _productTitle(
+        product,
+      ),
+      'description':
+          (product['description'] ??
+                  '')
+              .toString(),
+      'price':
+          (product['price'] ??
+                  '0')
+              .toString(),
+      'imageUrl':
+          _productImage(
+        product,
+      ),
+      'sellerName':
+          (product['sellerName'] ??
+                  'Local Artisan')
+              .toString(),
+      'sellerId':
+          (product['sellerId'] ??
+                  '')
+              .toString(),
+    };
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            ProductDetailPage(
+          product: productData,
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // GO TO CART
+  // ============================================================
+
+  void _goToCart() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            const AddToCartPage(),
+      ),
+    );
+  }
+
+  // ============================================================
+  // SUGGESTIONS
+  // ============================================================
+
   Widget _buildSuggestions() {
     return SizedBox(
       height: 52,
-      child:
-          ListView(
+      child: ListView(
         scrollDirection:
             Axis.horizontal,
         padding:
-            const EdgeInsets
-                .symmetric(
+            const EdgeInsets.symmetric(
           horizontal: 14,
         ),
         children: [
           _suggestionChip(
-            "💍 Wedding bangles",
+            '💍 Wedding bangles',
           ),
           _suggestionChip(
-            "🏠 Home decor",
+            '🏠 Home decor',
           ),
           _suggestionChip(
-            "🎁 Handmade gifts",
+            '🎁 Handmade gifts',
           ),
           _suggestionChip(
-            "👗 Traditional clothing",
+            '👗 Traditional clothing',
           ),
         ],
       ),
@@ -3119,10 +3236,8 @@ class _AIAssistantState extends State<AIAssistant> {
           const EdgeInsets.only(
         right: 8,
       ),
-      child:
-          ActionChip(
-        label:
-            Text(
+      child: ActionChip(
+        label: Text(
           text,
           style:
               const TextStyle(
@@ -3133,8 +3248,7 @@ class _AIAssistantState extends State<AIAssistant> {
         ),
         backgroundColor:
             Colors.white,
-        side:
-            BorderSide(
+        side: BorderSide(
           color: Colors.black
               .withOpacity(
             0.08,
@@ -3147,15 +3261,99 @@ class _AIAssistantState extends State<AIAssistant> {
             20,
           ),
         ),
-        onPressed:
-            () {
-          _useSuggestion(
-            text,
-          );
+        onPressed: () {
+          _controller.text =
+              text;
+
+          _inputFocusNode
+              .requestFocus();
         },
       ),
     );
   }
+
+  // ============================================================
+  // CHAT AREA
+  // ============================================================
+
+  Widget _buildChatArea() {
+    return Container(
+      color:
+          const Color(
+        0xFFFAFAFA,
+      ),
+      child: Column(
+        children: [
+          if (_messages.length <=
+              1)
+            _buildSuggestions(),
+
+          Expanded(
+            child:
+                ListView.builder(
+              controller:
+                  _scrollController,
+              padding:
+                  const EdgeInsets.fromLTRB(
+                15,
+                10,
+                15,
+                15,
+              ),
+              itemCount:
+                  _messages.length +
+                  (_isTyping
+                      ? 1
+                      : 0) +
+                  (_shownProducts
+                          .isNotEmpty
+                      ? 1
+                      : 0),
+              itemBuilder:
+                  (
+                context,
+                index,
+              ) {
+                if (_isTyping &&
+                    index ==
+                        _messages.length) {
+                  return _buildTypingIndicator();
+                }
+
+                final productIndex =
+                    _messages.length +
+                        (_isTyping
+                            ? 1
+                            : 0);
+
+                if (_shownProducts
+                        .isNotEmpty &&
+                    index ==
+                        productIndex) {
+                  return Column(
+                    children:
+                        _shownProducts
+                            .map(
+                              _buildProductCard,
+                            )
+                            .toList(),
+                  );
+                }
+
+                return _buildMessage(
+                  _messages[index],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // MESSAGE
+  // ============================================================
 
   Widget _buildMessage(
     _ChatMessage message,
@@ -3165,191 +3363,252 @@ class _AIAssistantState extends State<AIAssistant> {
           message.isUser
               ? Alignment.centerRight
               : Alignment.centerLeft,
-      child:
+      child: Column(
+        crossAxisAlignment:
+            message.isUser
+                ? CrossAxisAlignment.end
+                : CrossAxisAlignment.start,
+        children: [
           Container(
-        constraints:
-            BoxConstraints(
-          maxWidth:
-              MediaQuery.of(
-                    context,
-                  ).size.width *
-                  0.76,
-        ),
-        margin:
-            const EdgeInsets.only(
-          bottom: 10,
-        ),
-        padding:
-            const EdgeInsets
-                .symmetric(
-          horizontal: 14,
-          vertical: 11,
-        ),
-        decoration:
-            BoxDecoration(
-          color:
-              message.isUser
-                  ? const Color(
-                      0xFFD66A16,
-                    )
-                  : Colors.white,
-          borderRadius:
-              BorderRadius.only(
-            topLeft:
-                const Radius.circular(
-              17,
+            constraints:
+                BoxConstraints(
+              maxWidth:
+                  MediaQuery.of(
+                        context,
+                      ).size.width *
+                      0.76,
             ),
-            topRight:
-                const Radius.circular(
-              17,
+            margin:
+                const EdgeInsets.only(
+              bottom: 8,
             ),
-            bottomLeft:
-                Radius.circular(
-              message.isUser
-                  ? 17
-                  : 5,
+            padding:
+                const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 11,
             ),
-            bottomRight:
-                Radius.circular(
-              message.isUser
-                  ? 5
-                  : 17,
-            ),
-          ),
-          border:
-              message.isUser
-                  ? null
-                  : Border.all(
-                      color:
-                          Colors.black
+            decoration:
+                BoxDecoration(
+              color:
+                  message.isUser
+                      ? const Color(
+                          0xFFD66A16,
+                        )
+                      : Colors.white,
+              borderRadius:
+                  BorderRadius.only(
+                topLeft:
+                    const Radius.circular(
+                  17,
+                ),
+                topRight:
+                    const Radius.circular(
+                  17,
+                ),
+                bottomLeft:
+                    Radius.circular(
+                  message.isUser
+                      ? 17
+                      : 5,
+                ),
+                bottomRight:
+                    Radius.circular(
+                  message.isUser
+                      ? 5
+                      : 17,
+                ),
+              ),
+              border:
+                  message.isUser
+                      ? null
+                      : Border.all(
+                          color: Colors
+                              .black
                               .withOpacity(
-                        0.06,
-                      ),
-                    ),
-        ),
-        child:
-            Text(
-          message.text,
-          style:
-              TextStyle(
-            color:
-                message.isUser
-                    ? Colors.white
-                    : const Color(
-                        0xFF242424,
-                      ),
-            fontSize:
-                13,
-            height:
-                1.4,
-            fontWeight:
-                message.isUser
-                    ? FontWeight
-                        .w500
-                    : FontWeight
-                        .w400,
+                            0.06,
+                          ),
+                        ),
+            ),
+            child: Text(
+              message.text,
+              style:
+                  TextStyle(
+                color:
+                    message.isUser
+                        ? Colors.white
+                        : const Color(
+                            0xFF242424,
+                          ),
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
           ),
-        ),
+
+          // ======================================================
+          // FIRESTORE CATALOG OPTIONS
+          // ======================================================
+
+          if (!message.isUser &&
+              message.choices
+                  .isNotEmpty)
+            Padding(
+              padding:
+                  const EdgeInsets.only(
+                bottom: 10,
+              ),
+              child: Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children:
+                    message.choices
+                        .map(
+                          (
+                            choice,
+                          ) =>
+                              ActionChip(
+                            label:
+                                Text(
+                              choice,
+                              style:
+                                  const TextStyle(
+                                fontSize:
+                                    11,
+                                fontWeight:
+                                    FontWeight.w600,
+                              ),
+                            ),
+                            backgroundColor:
+                                Colors.white,
+                            side:
+                                const BorderSide(
+                              color:
+                                  Color(
+                                0xFFE4D5C8,
+                              ),
+                            ),
+                            shape:
+                                RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius.circular(
+                                18,
+                              ),
+                            ),
+                            onPressed:
+                                () {
+                              _controller.text =
+                                  choice;
+
+                              _sendMessage();
+                            },
+                          ),
+                        )
+                        .toList(),
+              ),
+            ),
+
+          // ======================================================
+          // GO TO CART
+          // ======================================================
+
+          if (message.showCartButton)
+            Padding(
+              padding:
+                  const EdgeInsets.only(
+                bottom: 12,
+              ),
+              child:
+                  OutlinedButton.icon(
+                onPressed:
+                    _goToCart,
+                icon:
+                    const Icon(
+                  Icons
+                      .shopping_cart_outlined,
+                  size: 16,
+                ),
+                label:
+                    const Text(
+                  'Go to cart',
+                ),
+                style:
+                    OutlinedButton.styleFrom(
+                  foregroundColor:
+                      const Color(
+                    0xFFD66A16,
+                  ),
+                  side:
+                      const BorderSide(
+                    color:
+                        Color(
+                      0xFFD66A16,
+                    ),
+                  ),
+                  shape:
+                      RoundedRectangleBorder(
+                    borderRadius:
+                        BorderRadius.circular(
+                      18,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
+
+  // ============================================================
+  // TYPING
+  // ============================================================
 
   Widget _buildTypingIndicator() {
     return Align(
       alignment:
           Alignment.centerLeft,
-      child:
-          Container(
+      child: Container(
         margin:
             const EdgeInsets.only(
           bottom: 10,
         ),
         padding:
-            const EdgeInsets
-                .symmetric(
+            const EdgeInsets.symmetric(
           horizontal: 15,
           vertical: 12,
         ),
         decoration:
             BoxDecoration(
-          color:
-              Colors.white,
+          color: Colors.white,
           borderRadius:
               BorderRadius.circular(
             18,
           ),
-          border:
-              Border.all(
+          border: Border.all(
             color: Colors.black
                 .withOpacity(
               0.06,
             ),
           ),
         ),
-        child:
-            const Row(
+        child: const Row(
           mainAxisSize:
               MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 7,
-              height: 7,
-              child:
-                  DecoratedBox(
-                decoration:
-                    BoxDecoration(
-                  color:
-                      Color(
-                    0xFFD66A16,
-                  ),
-                  shape:
-                      BoxShape.circle,
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 5,
-            ),
-            SizedBox(
-              width: 7,
-              height: 7,
-              child:
-                  DecoratedBox(
-                decoration:
-                    BoxDecoration(
-                  color:
-                      Color(
-                    0xFFD66A16,
-                  ),
-                  shape:
-                      BoxShape.circle,
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 5,
-            ),
-            SizedBox(
-              width: 7,
-              height: 7,
-              child:
-                  DecoratedBox(
-                decoration:
-                    BoxDecoration(
-                  color:
-                      Color(
-                    0xFFD66A16,
-                  ),
-                  shape:
-                      BoxShape.circle,
-                ),
-              ),
-            ),
+            _TypingDot(),
+            SizedBox(width: 5),
+            _TypingDot(),
+            SizedBox(width: 5),
+            _TypingDot(),
           ],
         ),
       ),
     );
   }
+
+  // ============================================================
+  // INPUT
+  // ============================================================
 
   Widget _buildInputArea() {
     return Container(
@@ -3360,16 +3619,13 @@ class _AIAssistantState extends State<AIAssistant> {
         12,
         11,
       ),
-      color:
-          Colors.white,
-      child:
-          Row(
+      color: Colors.white,
+      child: Row(
         crossAxisAlignment:
             CrossAxisAlignment.end,
         children: [
           Expanded(
-            child:
-                Container(
+            child: Container(
               decoration:
                   BoxDecoration(
                 color:
@@ -3381,45 +3637,38 @@ class _AIAssistantState extends State<AIAssistant> {
                   20,
                 ),
               ),
-              child:
-                  TextField(
+              child: TextField(
                 controller:
                     _controller,
                 focusNode:
                     _inputFocusNode,
-                minLines:
-                    1,
-                maxLines:
-                    4,
+                minLines: 1,
+                maxLines: 4,
                 textInputAction:
                     TextInputAction
                         .newline,
-                onSubmitted:
-                    (_) {
+                onSubmitted: (_) {
                   _sendMessage();
                 },
                 decoration:
                     const InputDecoration(
                   hintText:
-                      "What are you looking for?",
+                      'What are you looking for?',
                   hintStyle:
                       TextStyle(
                     color:
                         Color(
                       0xFF999999,
                     ),
-                    fontSize:
-                        13,
+                    fontSize: 13,
                   ),
                   border:
                       InputBorder.none,
                   contentPadding:
                       EdgeInsets
                           .symmetric(
-                    horizontal:
-                        16,
-                    vertical:
-                        11,
+                    horizontal: 16,
+                    vertical: 11,
                   ),
                 ),
               ),
@@ -3431,8 +3680,7 @@ class _AIAssistantState extends State<AIAssistant> {
           GestureDetector(
             onTap:
                 _sendMessage,
-            child:
-                Container(
+            child: Container(
               width: 43,
               height: 43,
               decoration:
@@ -3465,24 +3713,532 @@ class _AIAssistantState extends State<AIAssistant> {
       ),
     );
   }
+
+  // ============================================================
+  // HEADER
+  // ============================================================
+
+  Widget _buildHeader() {
+    return Container(
+      padding:
+          const EdgeInsets.fromLTRB(
+        18,
+        16,
+        12,
+        15,
+      ),
+      decoration:
+          const BoxDecoration(
+        gradient:
+            LinearGradient(
+          colors: [
+            Color(
+              0xFFFF8A3D,
+            ),
+            Color(
+              0xFFD66A16,
+            ),
+          ],
+          begin:
+              Alignment.topLeft,
+          end:
+              Alignment.bottomRight,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration:
+                BoxDecoration(
+              color: Colors.white
+                  .withOpacity(
+                0.18,
+              ),
+              borderRadius:
+                  BorderRadius.circular(
+                14,
+              ),
+            ),
+            child:
+                const Icon(
+              Icons.auto_awesome,
+              color:
+                  Colors.white,
+              size: 22,
+            ),
+          ),
+          const SizedBox(
+            width: 12,
+          ),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Karigari Assistant',
+                  style:
+                      TextStyle(
+                    color:
+                        Colors.white,
+                    fontSize: 16,
+                    fontWeight:
+                        FontWeight.w800,
+                  ),
+                ),
+                SizedBox(
+                  height: 3,
+                ),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.circle,
+                      color:
+                          Color(
+                        0xFFB8FFCB,
+                      ),
+                      size: 7,
+                    ),
+                    SizedBox(
+                      width: 5,
+                    ),
+                    Text(
+                      'Shopping assistant',
+                      style:
+                          TextStyle(
+                        color:
+                            Colors.white70,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: () {
+              Navigator.of(
+                context,
+              ).pop();
+            },
+            icon:
+                const Icon(
+              Icons
+                  .close_rounded,
+              color:
+                  Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+
+  @override
+  Widget build(
+    BuildContext context,
+  ) {
+    final keyboardHeight =
+        MediaQuery.of(context)
+            .viewInsets
+            .bottom;
+
+    return Stack(
+      children: [
+        Positioned(
+          left: 14,
+          right: 14,
+          bottom:
+              keyboardHeight > 0
+                  ? keyboardHeight +
+                      10
+                  : 82,
+          child: Material(
+            color:
+                Colors.transparent,
+            child: Container(
+              height:
+                  keyboardHeight > 0
+                      ? MediaQuery.of(
+                            context,
+                          ).size.height *
+                          0.55
+                      : MediaQuery.of(
+                            context,
+                          ).size.height *
+                          0.60,
+              constraints:
+                  const BoxConstraints(
+                maxHeight: 620,
+                minHeight: 350,
+              ),
+              decoration:
+                  BoxDecoration(
+                color:
+                    Colors.white,
+                borderRadius:
+                    BorderRadius.circular(
+                  28,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black
+                        .withOpacity(
+                      0.16,
+                    ),
+                    blurRadius: 35,
+                    offset:
+                        const Offset(
+                      0,
+                      12,
+                    ),
+                  ),
+                ],
+              ),
+              child:
+                  ClipRRect(
+                borderRadius:
+                    BorderRadius.circular(
+                  28,
+                ),
+                child:
+                    Column(
+                  children: [
+                    _buildHeader(),
+                    Expanded(
+                      child:
+                          _buildChatArea(),
+                    ),
+                    _buildInputArea(),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ============================================================
+  // HELPERS
+  // ============================================================
+
+  List<String> _aliasesForType(
+    String type,
+  ) {
+    for (final entry
+        in _productTypeAliases
+            .entries) {
+      if (_normalise(
+            entry.key,
+          ) ==
+          type) {
+        return entry.value
+            .map(
+              _normalise,
+            )
+            .toList();
+      }
+    }
+
+    return [type];
+  }
+
+  bool _isJewelleryType(
+    String type,
+  ) {
+    return {
+      'Bangles',
+      'Necklace',
+      'Earrings',
+      'Bracelet',
+    }.contains(
+      type,
+    );
+  }
+
+  bool _isHomeDecorType(
+    String type,
+  ) {
+    return {
+      'Lantern',
+      'Candle',
+      'Flower Vase',
+      'Clay Pot',
+      'Candle Holder',
+      'Wall Hanging',
+      'Serving Tray',
+      'Basket',
+      'Table Cloth',
+      'Table Runner',
+    }.contains(
+      type,
+    );
+  }
+
+  bool _isClothingType(
+    String type,
+  ) {
+    return {
+      'Saree',
+      'Dress',
+    }.contains(
+      type,
+    );
+  }
+
+  bool _isBagType(
+    String type,
+  ) {
+    return type == 'Bag';
+  }
+
+  String _titleCaseType(
+    String normalized,
+  ) {
+    for (final key
+        in _productTypeAliases
+            .keys) {
+      if (_normalise(
+            key,
+          ) ==
+          normalized) {
+        return key;
+      }
+    }
+
+    return normalized;
+  }
+
+  bool _containsPhrase(
+    String text,
+    String phrase,
+  ) {
+    final normalizedText =
+        _normalise(text);
+
+    final normalizedPhrase =
+        _normalise(phrase);
+
+    if (normalizedPhrase
+        .isEmpty) {
+      return false;
+    }
+
+    final escaped =
+        RegExp.escape(
+      normalizedPhrase,
+    ).replaceAll(
+      r'\ ',
+      r'\s+',
+    );
+
+    return RegExp(
+      r'(^|\s)' +
+          escaped +
+          r'($|\s)',
+      caseSensitive:
+          false,
+    ).hasMatch(
+      normalizedText,
+    );
+  }
+
+  String _normalise(
+    dynamic value,
+  ) {
+    if (value == null) {
+      return '';
+    }
+
+    return value
+        .toString()
+        .toLowerCase()
+        .trim()
+        .replaceAll(
+          RegExp(
+            r'[^\w\s-]',
+          ),
+          ' ',
+        )
+        .replaceAll(
+          RegExp(
+            r'\s+',
+          ),
+          ' ',
+        )
+        .trim();
+  }
+
+  List<String> _stringList(
+    dynamic value,
+  ) {
+    if (value is! List) {
+      return [];
+    }
+
+    return value
+        .map(
+          (item) =>
+              _normalise(
+            item,
+          ),
+        )
+        .where(
+          (item) =>
+              item.isNotEmpty,
+        )
+        .toSet()
+        .toList();
+  }
+
+  bool _hasNonEmpty(
+    dynamic value,
+  ) {
+    return value != null &&
+        value
+            .toString()
+            .trim()
+            .isNotEmpty;
+  }
+
+  int _toInt(
+    dynamic value,
+  ) {
+    if (value is int) {
+      return value;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(
+          value
+              .toString(),
+        ) ??
+        0;
+  }
+
+  double? _toDouble(
+    dynamic value,
+  ) {
+    if (value == null) {
+      return null;
+    }
+
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(
+      value
+          .toString()
+          .replaceAll(
+            '₹',
+            '',
+          )
+          .replaceAll(
+            ',',
+            '',
+          )
+          .trim(),
+    );
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance
+        .addPostFrameCallback(
+      (_) {
+        if (!_scrollController
+            .hasClients) {
+          return;
+        }
+
+        _scrollController
+            .animateTo(
+          _scrollController
+              .position
+              .maxScrollExtent,
+          duration:
+              const Duration(
+            milliseconds: 300,
+          ),
+          curve:
+              Curves.easeOut,
+        );
+      },
+    );
+  }
 }
+
+// ================================================================
+// CHAT MESSAGE
+// ================================================================
 
 class _ChatMessage {
   final String text;
   final bool isUser;
 
+  final List<String> choices;
+
+  final bool showCartButton;
+
   const _ChatMessage({
     required this.text,
     required this.isUser,
+    this.choices = const [],
+    this.showCartButton = false,
   });
 }
 
+// ================================================================
+// SCORED PRODUCT
+// ================================================================
+
 class _ScoredProduct {
-  final Map<String, dynamic> product;
+  final Map<String, dynamic>
+      product;
+
   final int score;
 
   const _ScoredProduct({
     required this.product,
     required this.score,
   });
+}
+
+// ================================================================
+// TYPING DOT
+// ================================================================
+
+class _TypingDot extends StatelessWidget {
+  const _TypingDot();
+
+  @override
+  Widget build(
+    BuildContext context,
+  ) {
+    return const SizedBox(
+      width: 7,
+      height: 7,
+      child: DecoratedBox(
+        decoration:
+            BoxDecoration(
+          color:
+              Color(0xFFD66A16),
+          shape:
+              BoxShape.circle,
+        ),
+      ),
+    );
+  }
 }

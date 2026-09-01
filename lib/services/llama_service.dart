@@ -1,340 +1,577 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
 class LlamaService {
+  // ============================================================
+  // OLLAMA CONFIGURATION
+  // ============================================================
+
   static const String _baseUrl =
       'http://10.242.159.181:11434';
 
   static const String _model =
       'llama3.2:3b';
 
+  static const Duration _requestTimeout =
+      Duration(seconds: 60);
+
+  // ============================================================
+  // UNDERSTAND USER REQUEST
+  // ============================================================
+
   static Future<Map<String, dynamic>> understandRequest({
     required String userMessage,
     List<Map<String, String>> conversation = const [],
     Map<String, dynamic>? previousIntent,
+    Map<String, dynamic>? conversationState,
   }) async {
-    final conversationText = conversation.isEmpty
-        ? 'No previous conversation.'
-        : conversation
-            .map(
-              (message) =>
-                  '${message['role']}: ${message['text']}',
-            )
-            .join('\n');
+    final conversationText =
+        _buildConversationText(conversation);
 
     final previousIntentText =
         previousIntent == null
-            ? 'No previous intent.'
+            ? 'No previous shopping intent.'
             : jsonEncode(previousIntent);
 
+    final stateText =
+        conversationState == null
+            ? 'No conversation state.'
+            : jsonEncode(conversationState);
+
     final prompt = '''
-You are the shopping-intent engine for Karigari, a marketplace for handmade products.
+You are Karigari's local shopping conversation engine.
 
-Your job is to understand the customer's COMPLETE shopping request from the current message AND the previous conversation.
+Karigari is a marketplace for handmade products.
 
-You do NOT recommend products.
-You do NOT invent products.
-Your output will be used by the Flutter application to search Firestore.
+Your job is to understand what the customer means.
 
-The customer may speak casually, use incomplete sentences, spelling mistakes, short replies, confirmations, corrections, or multiple requirements.
+You DO NOT search Firestore.
 
-IMPORTANT:
+You DO NOT invent products.
 
-1. ALWAYS consider the previous conversation.
+You DO NOT invent product IDs.
 
-2. A short follow-up such as:
-"yes"
-"yes show"
-"show me"
-"okay"
-"please"
-"that's fine"
-means the customer is continuing the previous request.
+You DO NOT decide whether a product is added to the cart.
 
-Do NOT treat these as a new shopping request.
+Flutter handles those operations.
 
-3. If the customer corrects themselves, use the correction.
+You only understand the user's language and produce structured intent.
 
-Example:
-User: "I want jewellery."
-User: "Actually I want bangles."
-Final intent should be bangles, not general jewellery.
+============================================================
+IMPORTANT CONVERSATIONAL RULE
+============================================================
 
-4. If the customer adds a preference, preserve the previous product request.
+A product search and product selection are DIFFERENT things.
 
-Example:
-User: "I want bangles."
-User: "For a wedding."
-Final intent:
+If the user says:
+
+"show me necklaces"
+
+this means SEARCH for necklaces.
+
+It does NOT mean:
+
+"buy a necklace"
+
+If the user says:
+
+"I like the Beaded Necklace"
+
+this means they are selecting a product that may already have been displayed.
+
+Flutter handles that selection.
+
+============================================================
+EXAMPLES
+============================================================
+
+User:
+"show me necklaces"
+
+Return:
+
+productType = Necklace
 category = Jewellery
-productType = Bangles
-occasion = wedding
 
-5. If the customer says:
-"I want handmade jewellery"
-use:
+Do NOT ask a clarification question.
+
+------------------------------------------------------------
+
+User:
+"I want handmade necklaces"
+
+Return:
+
+productType = Necklace
 category = Jewellery
 handmade = true
 
-6. If the customer says:
-"I want jewellery for a wedding"
-use:
-category = Jewellery
-occasion = wedding
+Do NOT ask a clarification question.
 
-7. If the customer says:
-"I want bangles for a wedding"
-use:
-category = Jewellery
-productType = Bangles
-occasion = wedding
+------------------------------------------------------------
 
-8. If the customer says:
-"I want a table runner"
-use:
-productType = Table Runner
+User:
+"show me some home decor"
 
-Do not turn "table runner" into a general request for all home products.
+This is broad.
 
-9. If the customer says:
-"I want something for my table"
-the request is not specific enough.
-Ask ONE useful clarification question.
+Return:
 
-10. If the customer then says:
-"like a table cloth"
-preserve the previous context and set:
-productType = Table Cloth
+category = Home Decor
+productType = null
+needsClarification = true
 
-11. If the customer then says:
-"table runner"
-update the productType to:
-Table Runner
+------------------------------------------------------------
 
-12. If the customer says:
-"I want some cool handmade items"
-there is no specific category.
+User:
+"show me handmade gift items"
 
-This is NOT necessarily a clarification.
-The application may show a broad selection of handmade products.
+This is broad.
 
-Use:
+Do not invent a product type.
+
+Return:
+
 category = null
 productType = null
+occasion = ["gift"]
 handmade = true
+needsClarification = true
 
-13. If the customer says:
-"I want something handmade"
-and gives no product type, the application may show handmade products broadly.
+------------------------------------------------------------
 
-14. If the customer explicitly gives a product category, ONLY return that category.
+User:
+"clay pots"
 
-Example:
-"I want handmade jewellery"
-must not become:
-Home Decor
-Table Linen
-Basket
-Kitchenware
+Return:
 
-15. If the user says "jwellery", "jewellery", "jewlery", "jewllery", interpret it as Jewellery.
+productType = Clay Pot
+category = Home Decor
 
-16. If the user says "bangles", interpret it as Bangles.
+------------------------------------------------------------
 
-17. If the user says "necklace", interpret it as Necklace.
+User:
+"red bangles for a wedding"
 
-18. If the user says "earrings", interpret it as Earrings.
+Return:
 
-19. If the user says "table runner", interpret it as Table Runner.
+category = Jewellery
+productType = Bangles
+colour = ["red"]
+occasion = ["wedding"]
 
-20. If the user says "table cloth", interpret it as Table Cloth.
+------------------------------------------------------------
 
-21. Never invent a category that the customer did not request.
+User:
+"something cheaper"
 
-22. Preserve useful preferences such as:
-material
-colour
-style
-occasion
-budget
-keywords
+Preserve the previous search.
 
-23. Do not ask unnecessary questions.
+Modify the budget/search.
 
-24. Ask ONE clarification question only when the product request genuinely cannot be searched meaningfully.
+------------------------------------------------------------
 
-25. A confirmation such as "yes show" should normally result in:
-needsClarification = false
-and preserve the previous intent.
+User:
+"show me something else"
 
-26. If the customer says "no" or rejects a suggestion, do not immediately invent another product category.
-Use the previous conversation to understand what they want next.
+Preserve the previous category/type unless the user explicitly changes it.
 
-27. If the customer asks for something unrelated to shopping, politely mark the request as unclear.
+------------------------------------------------------------
 
-28. Return ONLY valid JSON.
+User:
+"actually show me necklaces"
 
-Use exactly this structure:
+Replace the old product type with Necklace.
+
+Do NOT preserve an old product type such as Bangles.
+
+============================================================
+NORMAL CONVERSATION
+============================================================
+
+Handle normal conversation naturally.
+
+Examples:
+
+"hi"
+"hello"
+"how are you?"
+"thanks"
+"what can you do?"
+
+These are not product searches.
+
+Return:
+
+action = normal_conversation
+
+============================================================
+SHORT CONFIRMATIONS
+============================================================
+
+Short answers such as:
+
+"yes"
+"yeah"
+"okay"
+"sure"
+
+must be interpreted using conversation state.
+
+However, Flutter handles actual cart confirmation and product selection.
+
+If the conversation state says that the user is selecting a displayed product, do not turn "yes" into a new search.
+
+============================================================
+SPELLING
+============================================================
+
+Interpret:
+
+jwellery
+jewlery
+jewllery
+
+as Jewellery.
+
+Interpret:
+
+necklaces
+
+as Necklace.
+
+Interpret:
+
+bangles
+
+as Bangles.
+
+Interpret:
+
+earrings
+
+as Earrings.
+
+Interpret:
+
+table runners
+
+as Table Runner.
+
+Interpret:
+
+table cloths
+tablecloth
+
+as Table Cloth.
+
+============================================================
+OUTPUT
+============================================================
+
+Return ONLY valid JSON.
+
+Use exactly:
 
 {
-  "needsClarification": true or false,
-  "clarificationQuestion": "question or empty string",
-  "category": "category or null",
-  "subcategory": "subcategory or null",
-  "productType": "product type or null",
+  "action": "search_products | clarification | normal_conversation | modify_search",
+
+  "needsClarification": false,
+
+  "clarificationQuestion": "",
+
+  "category": null,
+
+  "subcategory": null,
+
+  "productType": null,
+
   "material": [],
+
   "colour": [],
+
   "style": [],
+
   "occasion": [],
-  "budget": null,
-  "handmade": true or false,
+
+  "budget": {
+    "min": null,
+    "max": null
+  },
+
+  "handmade": false,
+
   "keywords": [],
-  "reason": "short explanation"
+
+  "searchModification": {
+    "type": "",
+    "value": ""
+  },
+
+  "reason": ""
 }
 
-PREVIOUS CONVERSATION:
+============================================================
+PREVIOUS CONVERSATION
+============================================================
+
 $conversationText
 
-PREVIOUS INTENT:
+============================================================
+PREVIOUS INTENT
+============================================================
+
 $previousIntentText
 
-CURRENT CUSTOMER MESSAGE:
+============================================================
+CONVERSATION STATE
+============================================================
+
+$stateText
+
+============================================================
+CURRENT USER MESSAGE
+============================================================
+
 $userMessage
 ''';
 
-    final response = await http.post(
-      Uri.parse('$_baseUrl/api/generate'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'model': _model,
-        'prompt': prompt,
-        'stream': false,
-        'format': 'json',
-        'options': {
-          'temperature': 0.1,
-        },
-      }),
+    final decoded = await _generateJson(
+      prompt,
+      temperature: 0.1,
     );
 
-    if (response.statusCode != 200) {
-      throw Exception(
-        'Llama request failed: ${response.statusCode}',
-      );
-    }
-
-    final responseBody =
-        jsonDecode(response.body);
-
-    final llamaResponse =
-        responseBody['response'];
-
-    if (llamaResponse == null) {
-      throw Exception(
-        'Llama returned an empty response.',
-      );
-    }
-
-    final decoded =
-        jsonDecode(llamaResponse.toString());
-
-    if (decoded is! Map) {
-      throw Exception(
-        'Llama returned invalid intent data.',
-      );
-    }
-
-    return _normaliseIntent(
-      Map<String, dynamic>.from(decoded),
-    );
+    return _normaliseIntent(decoded);
   }
+
+  // ============================================================
+  // NATURAL CONVERSATION RESPONSE
+  // ============================================================
 
   static Future<String> generateResponse({
     required String userMessage,
     required List<Map<String, dynamic>> products,
     required Map<String, dynamic> intent,
     List<Map<String, String>> conversation = const [],
+    Map<String, dynamic>? conversationState,
   }) async {
-    final productsJson =
-        jsonEncode(products);
-
-    final intentJson =
-        jsonEncode(intent);
+    final safeProducts = products.map((product) {
+      return {
+        'id': product['documentId'] ??
+            product['productId'] ??
+            product['id'],
+        'title': product['title'],
+        'price': product['price'],
+        'category': product['category'],
+        'productType': product['productType'],
+      };
+    }).toList();
 
     final prompt = '''
-You are Karigari, a friendly shopping assistant for a handmade marketplace.
+You are Karigari, a friendly conversational shopping assistant.
 
-Respond naturally and conversationally.
+You are powered by a local Llama model.
 
-The Flutter application has already searched the Firestore database.
+The Flutter application controls Firestore and cart operations.
 
-IMPORTANT:
-You MUST only talk about products contained in the supplied product list.
+You must NEVER invent:
 
-Never invent products.
+- products
+- prices
+- product IDs
+- sellers
+- availability
+- product features
 
-Never mention a product category that is not represented by the supplied product list.
+============================================================
+CURRENT USER MESSAGE
+============================================================
 
-If products are available:
-- acknowledge what the customer asked for
-- say that you found matching products
-- keep the response short and natural
-- do not list product names because Flutter displays product cards separately
-- do not invent product features
-
-If products are empty:
-- politely explain that matching products were not found
-- suggest one useful way to broaden or modify the search
-- do not recommend unrelated categories
-
-If the customer is simply confirming a previous request:
-respond naturally and indicate that you found the matching products.
-
-Conversation:
-${conversation.map((e) => '${e['role']}: ${e['text']}').join('\n')}
-
-Customer:
 $userMessage
 
-Detected intent:
-$intentJson
+============================================================
+CONVERSATION
+============================================================
 
-Products found:
-$productsJson
+${_buildConversationText(conversation)}
+
+============================================================
+INTENT
+============================================================
+
+${jsonEncode(intent)}
+
+============================================================
+CONVERSATION STATE
+============================================================
+
+${conversationState == null ? 'No state.' : jsonEncode(conversationState)}
+
+============================================================
+PRODUCTS FROM FIRESTORE
+============================================================
+
+${jsonEncode(safeProducts)}
+
+============================================================
+RULES
+============================================================
+
+If action is normal_conversation:
+
+Have a natural conversation.
+
+If the user says hello:
+
+Say something like:
+
+"Hi! 👋 What kind of handmade products are you looking for?"
+
+If the user thanks you:
+
+Respond naturally.
+
+If products were found:
+
+Say that you found matching products.
+
+Do NOT list their names because Flutter displays product cards.
+
+Example:
+
+"I found 3 products that match your request."
+
+If products are empty:
+
+Explain that you could not find a close match.
+
+Do not invent alternatives.
+
+Keep the response short.
+
+Usually 1–2 sentences.
 
 Return ONLY the response text.
 ''';
 
-    final response = await http.post(
-      Uri.parse('$_baseUrl/api/generate'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'model': _model,
-        'prompt': prompt,
-        'stream': false,
-        'options': {
-          'temperature': 0.4,
-        },
-      }),
+    return _generateText(
+      prompt,
+      temperature: 0.35,
     );
+  }
+
+  // ============================================================
+  // GENERATE JSON
+  // ============================================================
+
+  static Future<Map<String, dynamic>> _generateJson(
+    String prompt, {
+    double temperature = 0.1,
+  }) async {
+    final response = await http
+        .post(
+          Uri.parse('$_baseUrl/api/generate'),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': _model,
+            'prompt': prompt,
+            'stream': false,
+            'format': 'json',
+            'options': {
+              'temperature': temperature,
+              'num_ctx': 8192,
+            },
+          }),
+        )
+        .timeout(_requestTimeout);
 
     if (response.statusCode != 200) {
       throw Exception(
-        'Llama response generation failed: ${response.statusCode}',
+        'Llama request failed: '
+        '${response.statusCode}\n'
+        '${response.body}',
       );
     }
 
-    final responseBody =
-        jsonDecode(response.body);
+    final body = jsonDecode(response.body);
 
-    final text =
-        responseBody['response']
-            ?.toString()
-            .trim();
+    final raw = body['response'];
+
+    if (raw == null) {
+      throw Exception(
+        'Llama returned an empty response.',
+      );
+    }
+
+    final text = raw.toString().trim();
+
+    if (text.isEmpty) {
+      throw Exception(
+        'Llama returned an empty response.',
+      );
+    }
+
+    try {
+      final decoded = jsonDecode(text);
+
+      if (decoded is! Map) {
+        throw Exception(
+          'Expected a JSON object.',
+        );
+      }
+
+      return Map<String, dynamic>.from(decoded);
+    } catch (e) {
+      throw Exception(
+        'Llama returned invalid JSON.\n\n'
+        'Response:\n$text\n\n'
+        'Error:\n$e',
+      );
+    }
+  }
+
+  // ============================================================
+  // GENERATE TEXT
+  // ============================================================
+
+  static Future<String> _generateText(
+    String prompt, {
+    double temperature = 0.35,
+  }) async {
+    final response = await http
+        .post(
+          Uri.parse('$_baseUrl/api/generate'),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'model': _model,
+            'prompt': prompt,
+            'stream': false,
+            'options': {
+              'temperature': temperature,
+              'num_ctx': 8192,
+            },
+          }),
+        )
+        .timeout(_requestTimeout);
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Llama response generation failed: '
+        '${response.statusCode}',
+      );
+    }
+
+    final body = jsonDecode(response.body);
+
+    final text = body['response']
+        ?.toString()
+        .trim();
 
     if (text == null || text.isEmpty) {
       throw Exception(
@@ -345,10 +582,77 @@ Return ONLY the response text.
     return text;
   }
 
+  // ============================================================
+  // CONVERSATION TEXT
+  // ============================================================
+
+  static String _buildConversationText(
+    List<Map<String, String>> conversation,
+  ) {
+    if (conversation.isEmpty) {
+      return 'No previous conversation.';
+    }
+
+    final recent = conversation.length > 20
+        ? conversation.sublist(
+            conversation.length - 20,
+          )
+        : conversation;
+
+    return recent.map((message) {
+      return '${message['role']}: ${message['text']}';
+    }).join('\n');
+  }
+
+  // ============================================================
+  // NORMALISE INTENT
+  // ============================================================
+
   static Map<String, dynamic> _normaliseIntent(
     Map<String, dynamic> data,
   ) {
+    final rawBudget = data['budget'];
+
+    Map<String, dynamic> budget = {
+      'min': null,
+      'max': null,
+    };
+
+    if (rawBudget is Map) {
+      budget = {
+        'min': _numberOrNull(
+          rawBudget['min'],
+        ),
+        'max': _numberOrNull(
+          rawBudget['max'],
+        ),
+      };
+    }
+
+    final rawModification =
+        data['searchModification'];
+
+    Map<String, dynamic> searchModification = {
+      'type': '',
+      'value': '',
+    };
+
+    if (rawModification is Map) {
+      searchModification = {
+        'type': _stringOrEmpty(
+          rawModification['type'],
+        ),
+        'value': _stringOrEmpty(
+          rawModification['value'],
+        ),
+      };
+    }
+
     return {
+      'action': _normaliseAction(
+        data['action'],
+      ),
+
       'needsClarification':
           data['needsClarification'] == true,
 
@@ -373,41 +677,78 @@ Return ONLY the response text.
       ),
 
       'material':
-          _stringList(
-        data['material'],
-      ),
+          _stringList(data['material']),
 
       'colour':
-          _stringList(
-        data['colour'],
-      ),
+          _stringList(data['colour']),
 
       'style':
-          _stringList(
-        data['style'],
-      ),
+          _stringList(data['style']),
 
       'occasion':
-          _stringList(
-        data['occasion'],
-      ),
+          _stringList(data['occasion']),
 
-      'budget':
-          data['budget'],
+      'budget': budget,
 
       'handmade':
           data['handmade'] == true,
 
       'keywords':
-          _stringList(
-        data['keywords'],
-      ),
+          _stringList(data['keywords']),
+
+      'searchModification':
+          searchModification,
 
       'reason':
-          _stringOrEmpty(
-        data['reason'],
-      ),
+          _stringOrEmpty(data['reason']),
     };
+  }
+
+  // ============================================================
+  // ACTION
+  // ============================================================
+
+  static String _normaliseAction(
+    dynamic value,
+  ) {
+    final action = value
+        ?.toString()
+        .trim()
+        .toLowerCase();
+
+    const allowed = {
+      'search_products',
+      'clarification',
+      'normal_conversation',
+      'modify_search',
+    };
+
+    if (allowed.contains(action)) {
+      return action!;
+    }
+
+    return 'normal_conversation';
+  }
+
+  // ============================================================
+  // HELPERS
+  // ============================================================
+
+  static String? _normaliseNullableString(
+    dynamic value,
+  ) {
+    if (value == null) {
+      return null;
+    }
+
+    final text = value.toString().trim();
+
+    if (text.isEmpty ||
+        text.toLowerCase() == 'null') {
+      return null;
+    }
+
+    return text;
   }
 
   static String _stringOrEmpty(
@@ -417,27 +758,7 @@ Return ONLY the response text.
       return '';
     }
 
-    return value
-        .toString()
-        .trim();
-  }
-
-  static String? _normaliseNullableString(
-    dynamic value,
-  ) {
-    if (value == null) {
-      return null;
-    }
-
-    final text =
-        value.toString().trim();
-
-    if (text.isEmpty ||
-        text.toLowerCase() == 'null') {
-      return null;
-    }
-
-    return text;
+    return value.toString().trim();
   }
 
   static List<String> _stringList(
@@ -459,5 +780,21 @@ Return ONLY the response text.
         )
         .toSet()
         .toList();
+  }
+
+  static num? _numberOrNull(
+    dynamic value,
+  ) {
+    if (value == null) {
+      return null;
+    }
+
+    if (value is num) {
+      return value;
+    }
+
+    return num.tryParse(
+      value.toString(),
+    );
   }
 }
