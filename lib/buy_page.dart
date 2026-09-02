@@ -15,6 +15,13 @@ class BuyPage extends StatefulWidget {
   final String productPrice;
   final String productImage;
 
+  // Original product price before campaign
+  final String originalProductPrice;
+
+  // Campaign information
+  final String campaignId;
+  final String campaignOffer;
+
   // =========================================================
   // SELLER
   // =========================================================
@@ -40,6 +47,9 @@ class BuyPage extends StatefulWidget {
     required this.productImage,
     required this.sellerName,
     required this.sellerId,
+    this.originalProductPrice = "",
+    this.campaignId = "",
+    this.campaignOffer = "",
     this.cartItems,
   });
 
@@ -57,12 +67,16 @@ class BuyPage extends StatefulWidget {
       productImage: "",
       sellerName: "",
       sellerId: "",
+      originalProductPrice: "",
+      campaignId: "",
+      campaignOffer: "",
       cartItems: cartItems,
     );
   }
 
   @override
-  State<BuyPage> createState() => _BuyPageState();
+  State<BuyPage> createState() =>
+      _BuyPageState();
 }
 
 class _BuyPageState extends State<BuyPage> {
@@ -73,13 +87,16 @@ class _BuyPageState extends State<BuyPage> {
   final GlobalKey<FormState> _formKey =
       GlobalKey<FormState>();
 
-  final TextEditingController _nameController =
+  final TextEditingController
+      _nameController =
       TextEditingController();
 
-  final TextEditingController _addressController =
+  final TextEditingController
+      _addressController =
       TextEditingController();
 
-  final TextEditingController _phoneController =
+  final TextEditingController
+      _phoneController =
       TextEditingController();
 
   // =========================================================
@@ -117,6 +134,13 @@ class _BuyPageState extends State<BuyPage> {
       widget.cartItems != null;
 
   // =========================================================
+  // CHECKOUT ITEMS OVERRIDE
+  // =========================================================
+
+  List<Map<String, dynamic>>?
+      _validatedItems;
+
+  // =========================================================
   // SAFE INT CONVERSION
   // =========================================================
 
@@ -125,14 +149,47 @@ class _BuyPageState extends State<BuyPage> {
       return value;
     }
 
-    if (value is double) {
+    if (value is num) {
       return value.round();
     }
 
     return int.tryParse(
-          value?.toString() ?? "",
+          value
+                  ?.toString()
+                  .replaceAll(',', '')
+                  .trim() ??
+              "",
         ) ??
         0;
+  }
+
+  // =========================================================
+  // SAFE DOUBLE CONVERSION
+  // =========================================================
+
+  double _toDouble(dynamic value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(
+          value
+                  ?.toString()
+                  .replaceAll(',', '')
+                  .trim() ??
+              "",
+        ) ??
+        0;
+  }
+
+  // =========================================================
+  // FORMAT PRICE
+  // =========================================================
+
+  String _formatPrice(double value) {
+    final rounded = value.round();
+
+    return rounded.toString();
   }
 
   // =========================================================
@@ -140,26 +197,64 @@ class _BuyPageState extends State<BuyPage> {
   // =========================================================
 
   List<Map<String, dynamic>> get _items {
+    // =======================================================
+    // USE VALIDATED ITEMS AFTER PRICE VERIFICATION
+    // =======================================================
+
+    if (_validatedItems != null) {
+      return _validatedItems!;
+    }
+
+    // =======================================================
+    // CART CHECKOUT
+    // =======================================================
+
     if (_isCartCheckout) {
       return widget.cartItems!.map((item) {
+        final quantity =
+            _toInt(item["quantity"]);
+
         return {
           "cartId":
-              (item["cartId"] ?? "").toString(),
+              (item["cartId"] ?? "")
+                  .toString(),
 
           "productId":
-              (item["productId"] ?? "").toString(),
+              (item["productId"] ?? "")
+                  .toString(),
 
           "title":
-              (item["title"] ?? "").toString(),
+              (item["title"] ?? "")
+                  .toString(),
 
           "description":
-              (item["description"] ?? "").toString(),
+              (item["description"] ?? "")
+                  .toString(),
 
+          // Actual price customer pays
           "price":
-              (item["price"] ?? "0").toString(),
+              (item["price"] ?? "0")
+                  .toString(),
+
+          // Original price before campaign
+          "originalPrice":
+              (item["originalPrice"] ??
+                      item["price"] ??
+                      "0")
+                  .toString(),
+
+          // Campaign information
+          "campaignId":
+              (item["campaignId"] ?? "")
+                  .toString(),
+
+          "campaignOffer":
+              (item["campaignOffer"] ?? "")
+                  .toString(),
 
           "imageUrl":
-              (item["imageUrl"] ?? "").toString(),
+              (item["imageUrl"] ?? "")
+                  .toString(),
 
           "sellerName":
               (item["sellerName"] ??
@@ -167,12 +262,11 @@ class _BuyPageState extends State<BuyPage> {
                   .toString(),
 
           "sellerId":
-              (item["sellerId"] ?? "").toString(),
+              (item["sellerId"] ?? "")
+                  .toString(),
 
           "quantity":
-              _toInt(item["quantity"]) > 0
-                  ? _toInt(item["quantity"])
-                  : 1,
+              quantity > 0 ? quantity : 1,
         };
       }).toList();
     }
@@ -191,11 +285,25 @@ class _BuyPageState extends State<BuyPage> {
         "title":
             widget.productName,
 
-        "description":
-            "",
+        "description": "",
 
+        // Actual price customer pays
         "price":
             widget.productPrice,
+
+        // Original price before campaign
+        "originalPrice":
+            widget.originalProductPrice
+                    .isNotEmpty
+                ? widget.originalProductPrice
+                : widget.productPrice,
+
+        // Campaign information
+        "campaignId":
+            widget.campaignId,
+
+        "campaignOffer":
+            widget.campaignOffer,
 
         "imageUrl":
             widget.productImage,
@@ -284,7 +392,8 @@ class _BuyPageState extends State<BuyPage> {
           "Payment failed: "
           "${response.message ?? "Please try again."}",
         ),
-        backgroundColor: Colors.red.shade700,
+        backgroundColor:
+            Colors.red.shade700,
       ),
     );
   }
@@ -330,10 +439,12 @@ class _BuyPageState extends State<BuyPage> {
         _isProcessingOrder = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
-          content:
-              Text("Please log in before placing an order."),
+          content: Text(
+            "Please log in before placing an order.",
+          ),
         ),
       );
 
@@ -344,8 +455,7 @@ class _BuyPageState extends State<BuyPage> {
       final firestore =
           FirebaseFirestore.instance;
 
-      final batch =
-          firestore.batch();
+      final batch = firestore.batch();
 
       // =====================================================
       // CREATE ONE ORDER PER PRODUCT
@@ -353,9 +463,7 @@ class _BuyPageState extends State<BuyPage> {
 
       for (final item in _items) {
         final orderRef =
-            firestore
-                .collection("orders")
-                .doc();
+            firestore.collection("orders").doc();
 
         final price =
             _toInt(item["price"]);
@@ -371,9 +479,9 @@ class _BuyPageState extends State<BuyPage> {
         batch.set(
           orderRef,
           {
-            // ===============================================
+            // =================================================
             // PRODUCT
-            // ===============================================
+            // =================================================
 
             "productId":
                 item["productId"] ?? "",
@@ -381,21 +489,33 @@ class _BuyPageState extends State<BuyPage> {
             "productName":
                 item["title"] ?? "",
 
+            // Actual price paid
             "productPrice":
                 item["price"] ?? "0",
+
+            // Original price before campaign
+            "originalProductPrice":
+                item["originalPrice"] ??
+                    item["price"] ??
+                    "0",
+
+            // Campaign information
+            "campaignId":
+                item["campaignId"] ?? "",
+
+            "campaignOffer":
+                item["campaignOffer"] ?? "",
 
             "productImage":
                 item["imageUrl"] ?? "",
 
-            "quantity":
-                quantity,
+            "quantity": quantity,
 
-            "itemTotal":
-                itemTotal,
+            "itemTotal": itemTotal,
 
-            // ===============================================
+            // =================================================
             // SELLER
-            // ===============================================
+            // =================================================
 
             "sellerId":
                 item["sellerId"] ?? "",
@@ -404,9 +524,9 @@ class _BuyPageState extends State<BuyPage> {
                 item["sellerName"] ??
                     "Local Artisan",
 
-            // ===============================================
+            // =================================================
             // CUSTOMER
-            // ===============================================
+            // =================================================
 
             "userId":
                 currentUser.uid,
@@ -423,9 +543,9 @@ class _BuyPageState extends State<BuyPage> {
             "phone":
                 _phoneController.text.trim(),
 
-            // ===============================================
+            // =================================================
             // PAYMENT
-            // ===============================================
+            // =================================================
 
             "paymentMethod":
                 _selectedPayment,
@@ -436,18 +556,18 @@ class _BuyPageState extends State<BuyPage> {
             "paymentId":
                 payId ?? "",
 
-            // ===============================================
+            // =================================================
             // ORDER STATUS
-            // ===============================================
+            // =================================================
 
             "orderStatus":
                 status == "done"
                     ? "confirmed"
                     : "pending",
 
-            // ===============================================
+            // =================================================
             // TIMESTAMP
-            // ===============================================
+            // =================================================
 
             "timestamp":
                 FieldValue.serverTimestamp(),
@@ -462,30 +582,30 @@ class _BuyPageState extends State<BuyPage> {
       await batch.commit();
 
       // =====================================================
-      // CLEAR CART AFTER SUCCESSFUL ORDER
+      // CLEAR ONLY CHECKED-OUT CART ITEMS
       // =====================================================
 
       if (_isCartCheckout) {
-        final cartSnapshot =
-            await firestore
+        final cartBatch =
+            firestore.batch();
+
+        for (final item in _items) {
+          final cartId =
+              (item["cartId"] ?? "")
+                  .toString();
+
+          if (cartId.isNotEmpty) {
+            final cartRef = firestore
                 .collection("users")
                 .doc(currentUser.uid)
                 .collection("cart")
-                .get();
+                .doc(cartId);
 
-        if (cartSnapshot.docs.isNotEmpty) {
-          final cartBatch =
-              firestore.batch();
-
-          for (final doc
-              in cartSnapshot.docs) {
-            cartBatch.delete(
-              doc.reference,
-            );
+            cartBatch.delete(cartRef);
           }
-
-          await cartBatch.commit();
         }
+
+        await cartBatch.commit();
       }
 
       // =====================================================
@@ -512,7 +632,8 @@ class _BuyPageState extends State<BuyPage> {
         _isProcessingOrder = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         SnackBar(
           content:
               Text("Order save failed: $e"),
@@ -538,11 +659,9 @@ class _BuyPageState extends State<BuyPage> {
           "rzp_test_soO0DVUQSdQ81X",
 
       // Razorpay expects paise
-      "amount":
-          amount * 100,
+      "amount": amount * 100,
 
-      "name":
-          "Karigari",
+      "name": "Karigari",
 
       "description":
           _isCartCheckout
@@ -552,14 +671,12 @@ class _BuyPageState extends State<BuyPage> {
       "prefill": {
         "contact":
             _phoneController.text.trim(),
-
         "email":
             currentUser?.email ?? "",
       },
 
       "theme": {
-        "color":
-            "#D67016",
+        "color": "#D67016",
       },
     };
 
@@ -572,10 +689,12 @@ class _BuyPageState extends State<BuyPage> {
         _isProcessingOrder = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         SnackBar(
-          content:
-              Text("Unable to open payment: $e"),
+          content: Text(
+            "Unable to open payment: $e",
+          ),
           backgroundColor:
               Colors.red.shade700,
         ),
@@ -584,10 +703,86 @@ class _BuyPageState extends State<BuyPage> {
   }
 
   // =========================================================
+  // GET CAMPAIGN DISCOUNT
+  // =========================================================
+
+  double _getDiscountPercentage(
+    Map<String, dynamic> campaign,
+  ) {
+    final offer =
+        (campaign['offer'] ?? "")
+            .toString()
+            .trim();
+
+    final match = RegExp(
+      r'(\d+(?:\.\d+)?)\s*%',
+    ).firstMatch(offer);
+
+    return double.tryParse(
+          match?.group(1) ?? "",
+        ) ??
+        0;
+  }
+
+  // =========================================================
+  // GET CURRENT ACTIVE CAMPAIGN PRICE
+  // =========================================================
+
+  Future<double?> _getCurrentCampaignPrice(
+    String productId,
+    double originalPrice,
+  ) async {
+    if (productId.isEmpty) {
+      return null;
+    }
+
+    final snapshot =
+        await FirebaseFirestore.instance
+            .collection('campaigns')
+            .where(
+              'enabled',
+              isEqualTo: true,
+            )
+            .get();
+
+    for (final doc
+        in snapshot.docs) {
+      final data = doc.data();
+
+      final status =
+          (data['status'] ?? "")
+              .toString();
+
+      final campaignProductId =
+          (data['productId'] ?? "")
+              .toString();
+
+      if (status == 'Active' &&
+          campaignProductId ==
+              productId) {
+        final discount =
+            _getDiscountPercentage(data);
+
+        if (discount > 0) {
+          final campaignPrice =
+              originalPrice *
+              (1 - discount / 100);
+
+          // Same rounding used everywhere.
+          return campaignPrice
+              .roundToDouble();
+        }
+      }
+    }
+
+    return null;
+  }
+
+  // =========================================================
   // CONFIRM ORDER
   // =========================================================
 
-  void _confirmOrder() {
+  Future<void> _confirmOrder() async {
     if (_isProcessingOrder) {
       return;
     }
@@ -598,45 +793,264 @@ class _BuyPageState extends State<BuyPage> {
     }
 
     if (_items.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
         const SnackBar(
-          content:
-              Text("There are no items to purchase."),
+          content: Text(
+            "There are no items to purchase.",
+          ),
         ),
       );
 
       return;
     }
 
-    final subtotal =
-        _calculateSubtotal();
-
-    final total =
-        subtotal +
-        deliveryCharge +
-        platformFee;
-
     setState(() {
       _isProcessingOrder = true;
     });
 
     // =======================================================
-    // COD
+    // VALIDATE CURRENT PRICES
     // =======================================================
 
-    if (_selectedPayment == "cod") {
-      _saveOrders(
-        status: "pending",
+    try {
+      final updatedItems =
+          <Map<String, dynamic>>[];
+
+      bool priceChanged = false;
+
+      for (final originalItem
+          in _items) {
+        final item =
+            Map<String, dynamic>.from(
+          originalItem,
+        );
+
+        final productId =
+            (item["productId"] ?? "")
+                .toString();
+
+        final currentCheckoutPrice =
+            _toDouble(item["price"]);
+
+        // ---------------------------------------------------
+        // FETCH CURRENT PRODUCT
+        // ---------------------------------------------------
+
+        double originalPrice =
+            _toDouble(
+          item["originalPrice"],
+        );
+
+        if (productId.isNotEmpty) {
+          final productDoc =
+              await FirebaseFirestore.instance
+                  .collection('products')
+                  .doc(productId)
+                  .get();
+
+          if (productDoc.exists) {
+            final productData =
+                productDoc.data();
+
+            final databasePrice =
+                _toDouble(
+              productData?['price'],
+            );
+
+            if (databasePrice > 0) {
+              originalPrice =
+                  databasePrice;
+            }
+          }
+        }
+
+        // ---------------------------------------------------
+        // CHECK CURRENT ACTIVE CAMPAIGN
+        // ---------------------------------------------------
+
+        final campaignPrice =
+            await _getCurrentCampaignPrice(
+          productId,
+          originalPrice,
+        );
+
+        final effectivePrice =
+            campaignPrice ??
+                originalPrice;
+
+        // ---------------------------------------------------
+        // COMPARE WITH CHECKOUT PRICE
+        // ---------------------------------------------------
+
+        if (effectivePrice.round() !=
+            currentCheckoutPrice
+                .round()) {
+          priceChanged = true;
+        }
+
+        // ---------------------------------------------------
+        // UPDATE CAMPAIGN INFORMATION
+        // ---------------------------------------------------
+
+        if (campaignPrice != null) {
+          final campaignSnapshot =
+              await FirebaseFirestore
+                  .instance
+                  .collection(
+                      'campaigns')
+                  .where(
+                    'enabled',
+                    isEqualTo: true,
+                  )
+                  .get();
+
+          for (final doc
+              in campaignSnapshot.docs) {
+            final data = doc.data();
+
+            final status =
+                (data['status'] ??
+                        "")
+                    .toString();
+
+            final campaignProductId =
+                (data['productId'] ??
+                        "")
+                    .toString();
+
+            if (status == 'Active' &&
+                campaignProductId ==
+                    productId) {
+              item["campaignId"] =
+                  doc.id;
+
+              item["campaignOffer"] =
+                  (data['offer'] ?? "")
+                      .toString();
+
+              break;
+            }
+          }
+        } else {
+          // Campaign no longer active.
+          item["campaignId"] = "";
+          item["campaignOffer"] = "";
+        }
+
+        item["price"] =
+            _formatPrice(
+          effectivePrice,
+        );
+
+        item["originalPrice"] =
+            _formatPrice(
+          originalPrice,
+        );
+
+        updatedItems.add(item);
+      }
+
+      // =====================================================
+      // CAMPAIGN EXPIRED / PRICE CHANGED
+      // =====================================================
+
+      if (priceChanged) {
+        if (!mounted) return;
+
+        setState(() {
+          _isProcessingOrder = false;
+        });
+
+        ScaffoldMessenger.of(context)
+            .showSnackBar(
+          const SnackBar(
+            content: Text(
+              "A campaign has ended or changed. "
+              "The price is no longer available. "
+              "Please review your cart.",
+            ),
+            duration:
+                Duration(seconds: 4),
+          ),
+        );
+
+        return;
+      }
+
+      // =====================================================
+      // SAVE VALIDATED ITEMS
+      // =====================================================
+
+      if (!mounted) return;
+
+      setState(() {
+        _validatedItems =
+            updatedItems;
+      });
+
+      // =====================================================
+      // CALCULATE TOTAL
+      // =====================================================
+
+      int subtotal = 0;
+
+      for (final item
+          in updatedItems) {
+        final price =
+            _toInt(item["price"]);
+
+        final quantity =
+            _toInt(item["quantity"]) > 0
+                ? _toInt(
+                    item["quantity"],
+                  )
+                : 1;
+
+        subtotal +=
+            price * quantity;
+      }
+
+      final total =
+          subtotal +
+              deliveryCharge +
+              platformFee;
+
+      // =====================================================
+      // COD
+      // =====================================================
+
+      if (_selectedPayment == "cod") {
+        await _saveOrders(
+          status: "pending",
+        );
+
+        return;
+      }
+
+      // =====================================================
+      // ONLINE PAYMENT
+      // =====================================================
+
+      _startOnlinePayment(total);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isProcessingOrder = false;
+      });
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          content: Text(
+            "Could not verify prices: $e",
+          ),
+          backgroundColor:
+              Colors.red.shade700,
+        ),
       );
-
-      return;
     }
-
-    // =======================================================
-    // ONLINE
-    // =======================================================
-
-    _startOnlinePayment(total);
   }
 
   // =========================================================
@@ -652,7 +1066,9 @@ class _BuyPageState extends State<BuyPage> {
 
       final quantity =
           _toInt(item["quantity"]) > 0
-              ? _toInt(item["quantity"])
+              ? _toInt(
+                  item["quantity"],
+                )
               : 1;
 
       subtotal +=
@@ -667,34 +1083,33 @@ class _BuyPageState extends State<BuyPage> {
   // =========================================================
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+    BuildContext context,
+  ) {
     final subtotal =
         _calculateSubtotal();
 
     final total =
         subtotal +
-        deliveryCharge +
-        platformFee;
+            deliveryCharge +
+            platformFee;
 
     return Scaffold(
       backgroundColor:
           Colors.grey.shade50,
 
-      // =======================================================
+      // =====================================================
       // APP BAR
-      // =======================================================
+      // =====================================================
 
       appBar: AppBar(
         elevation: 0,
-
         backgroundColor:
             primaryOrange,
-
         iconTheme:
             const IconThemeData(
           color: Colors.white,
         ),
-
         title: const Text(
           "Checkout",
           style: TextStyle(
@@ -705,13 +1120,12 @@ class _BuyPageState extends State<BuyPage> {
         ),
       ),
 
-      // =======================================================
+      // =====================================================
       // BODY
-      // =======================================================
+      // =====================================================
 
       body: Form(
         key: _formKey,
-
         child: SingleChildScrollView(
           padding:
               const EdgeInsets.fromLTRB(
@@ -720,11 +1134,9 @@ class _BuyPageState extends State<BuyPage> {
             16,
             110,
           ),
-
           child: Column(
             crossAxisAlignment:
                 CrossAxisAlignment.start,
-
             children: [
               // =================================================
               // YOUR ITEMS
@@ -739,9 +1151,7 @@ class _BuyPageState extends State<BuyPage> {
                 ),
               ),
 
-              const SizedBox(
-                height: 10,
-              ),
+              const SizedBox(height: 10),
 
               ..._items.map(
                 (item) =>
@@ -749,8 +1159,7 @@ class _BuyPageState extends State<BuyPage> {
               ),
 
               const SizedBox(
-                height: 22,
-              ),
+                  height: 22),
 
               // =================================================
               // SHIPPING
@@ -761,16 +1170,18 @@ class _BuyPageState extends State<BuyPage> {
               ),
 
               const SizedBox(
-                height: 12,
-              ),
+                  height: 12),
+
+              // =================================================
+              // NAME
+              // =================================================
 
               TextFormField(
                 controller:
                     _nameController,
-
                 textCapitalization:
-                    TextCapitalization.words,
-
+                    TextCapitalization
+                        .words,
                 decoration:
                     InputDecoration(
                   labelText:
@@ -782,7 +1193,8 @@ class _BuyPageState extends State<BuyPage> {
                   border:
                       OutlineInputBorder(
                     borderRadius:
-                        BorderRadius.circular(
+                        BorderRadius
+                            .circular(
                       12,
                     ),
                   ),
@@ -790,18 +1202,19 @@ class _BuyPageState extends State<BuyPage> {
                   fillColor:
                       Colors.white,
                 ),
-
                 validator: (value) {
                   if (value == null ||
-                      value.trim().isEmpty) {
-                    return
-                        "Enter your name";
+                      value
+                          .trim()
+                          .isEmpty) {
+                    return "Enter your name";
                   }
 
-                  if (value.trim().length <
+                  if (value
+                          .trim()
+                          .length <
                       2) {
-                    return
-                        "Enter a valid name";
+                    return "Enter a valid name";
                   }
 
                   return null;
@@ -809,18 +1222,19 @@ class _BuyPageState extends State<BuyPage> {
               ),
 
               const SizedBox(
-                height: 12,
-              ),
+                  height: 12),
+
+              // =================================================
+              // ADDRESS
+              // =================================================
 
               TextFormField(
                 controller:
                     _addressController,
-
                 maxLines: 3,
-
                 textCapitalization:
-                    TextCapitalization.sentences,
-
+                    TextCapitalization
+                        .sentences,
                 decoration:
                     InputDecoration(
                   labelText:
@@ -841,7 +1255,8 @@ class _BuyPageState extends State<BuyPage> {
                   border:
                       OutlineInputBorder(
                     borderRadius:
-                        BorderRadius.circular(
+                        BorderRadius
+                            .circular(
                       12,
                     ),
                   ),
@@ -849,18 +1264,19 @@ class _BuyPageState extends State<BuyPage> {
                   fillColor:
                       Colors.white,
                 ),
-
                 validator: (value) {
                   if (value == null ||
-                      value.trim().isEmpty) {
-                    return
-                        "Enter your address";
+                      value
+                          .trim()
+                          .isEmpty) {
+                    return "Enter your address";
                   }
 
-                  if (value.trim().length <
+                  if (value
+                          .trim()
+                          .length <
                       10) {
-                    return
-                        "Enter a complete address";
+                    return "Enter a complete address";
                   }
 
                   return null;
@@ -868,18 +1284,18 @@ class _BuyPageState extends State<BuyPage> {
               ),
 
               const SizedBox(
-                height: 12,
-              ),
+                  height: 12),
+
+              // =================================================
+              // PHONE
+              // =================================================
 
               TextFormField(
                 controller:
                     _phoneController,
-
                 keyboardType:
                     TextInputType.phone,
-
                 maxLength: 10,
-
                 decoration:
                     InputDecoration(
                   labelText:
@@ -894,7 +1310,8 @@ class _BuyPageState extends State<BuyPage> {
                   border:
                       OutlineInputBorder(
                     borderRadius:
-                        BorderRadius.circular(
+                        BorderRadius
+                            .circular(
                       12,
                     ),
                   ),
@@ -902,21 +1319,19 @@ class _BuyPageState extends State<BuyPage> {
                   fillColor:
                       Colors.white,
                 ),
-
                 validator: (value) {
                   final phone =
-                      value?.trim() ?? "";
+                      value?.trim() ??
+                          "";
 
                   if (phone.isEmpty) {
-                    return
-                        "Enter your phone number";
+                    return "Enter your phone number";
                   }
 
                   if (!RegExp(
                     r'^[0-9]{10}$',
                   ).hasMatch(phone)) {
-                    return
-                        "Enter a valid 10-digit phone number";
+                    return "Enter a valid 10-digit phone number";
                   }
 
                   return null;
@@ -924,8 +1339,7 @@ class _BuyPageState extends State<BuyPage> {
               ),
 
               const SizedBox(
-                height: 24,
-              ),
+                  height: 24),
 
               // =================================================
               // PAYMENT
@@ -936,40 +1350,33 @@ class _BuyPageState extends State<BuyPage> {
               ),
 
               const SizedBox(
-                height: 10,
-              ),
+                  height: 10),
 
               _buildPaymentOption(
                 title:
                     "Cash on Delivery",
                 subtitle:
                     "Pay when your order arrives",
-                value:
-                    "cod",
-                icon:
-                    Icons
-                        .payments_outlined,
+                value: "cod",
+                icon: Icons
+                    .payments_outlined,
               ),
 
               const SizedBox(
-                height: 10,
-              ),
+                  height: 10),
 
               _buildPaymentOption(
                 title:
                     "Card / UPI",
                 subtitle:
                     "Secure payment through Razorpay",
-                value:
-                    "online",
-                icon:
-                    Icons
-                        .account_balance_wallet_outlined,
+                value: "online",
+                icon: Icons
+                    .account_balance_wallet_outlined,
               ),
 
               const SizedBox(
-                height: 24,
-              ),
+                  height: 24),
 
               // =================================================
               // ORDER SUMMARY
@@ -980,32 +1387,25 @@ class _BuyPageState extends State<BuyPage> {
               ),
 
               const SizedBox(
-                height: 12,
-              ),
+                  height: 12),
 
               Container(
                 padding:
                     const EdgeInsets.all(
                   16,
                 ),
-
                 decoration:
                     BoxDecoration(
-                  color:
-                      Colors.white,
-
+                  color: Colors.white,
                   borderRadius:
                       BorderRadius.circular(
                     14,
                   ),
-
-                  border:
-                      Border.all(
+                  border: Border.all(
                     color:
                         Colors.grey.shade200,
                   ),
                 ),
-
                 child: Column(
                   children: [
                     _buildSummaryRow(
@@ -1029,8 +1429,7 @@ class _BuyPageState extends State<BuyPage> {
                               .symmetric(
                         vertical: 10,
                       ),
-                      child:
-                          Divider(
+                      child: Divider(
                         color:
                             Colors.grey.shade300,
                       ),
@@ -1049,9 +1448,9 @@ class _BuyPageState extends State<BuyPage> {
         ),
       ),
 
-      // =======================================================
+      // =====================================================
       // BOTTOM PAY BUTTON
-      // =======================================================
+      // =====================================================
 
       bottomNavigationBar:
           SafeArea(
@@ -1063,57 +1462,38 @@ class _BuyPageState extends State<BuyPage> {
             16,
             12,
           ),
-
           decoration:
               BoxDecoration(
-            color:
-                Colors.white,
-
+            color: Colors.white,
             boxShadow: [
               BoxShadow(
-                color:
-                    Colors.black
-                        .withOpacity(
-                  0.08,
-                ),
-                blurRadius:
-                    14,
+                color: Colors.black
+                    .withOpacity(0.08),
+                blurRadius: 14,
                 offset:
-                    const Offset(
-                  0,
-                  -4,
-                ),
+                    const Offset(0, -4),
               ),
             ],
           ),
-
-          child:
-              SizedBox(
-            width:
-                double.infinity,
-
+          child: SizedBox(
+            width: double.infinity,
             height: 54,
-
             child:
                 ElevatedButton(
               onPressed:
                   _isProcessingOrder
                       ? null
                       : _confirmOrder,
-
               style:
-                  ElevatedButton.styleFrom(
+                  ElevatedButton
+                      .styleFrom(
                 backgroundColor:
                     darkOrange,
-
                 disabledBackgroundColor:
                     Colors.grey.shade400,
-
                 foregroundColor:
                     Colors.white,
-
                 elevation: 0,
-
                 shape:
                     RoundedRectangleBorder(
                   borderRadius:
@@ -1122,7 +1502,6 @@ class _BuyPageState extends State<BuyPage> {
                   ),
                 ),
               ),
-
               child:
                   _isProcessingOrder
                       ? const SizedBox(
@@ -1130,7 +1509,8 @@ class _BuyPageState extends State<BuyPage> {
                           width: 23,
                           child:
                               CircularProgressIndicator(
-                            strokeWidth: 2.5,
+                            strokeWidth:
+                                2.5,
                             color:
                                 Colors.white,
                           ),
@@ -1144,7 +1524,8 @@ class _BuyPageState extends State<BuyPage> {
                               const TextStyle(
                             fontSize: 16,
                             fontWeight:
-                                FontWeight.bold,
+                                FontWeight
+                                    .bold,
                           ),
                         ),
             ),
@@ -1163,11 +1544,9 @@ class _BuyPageState extends State<BuyPage> {
   ) {
     return Text(
       title,
-      style:
-          const TextStyle(
+      style: const TextStyle(
         fontSize: 19,
-        fontWeight:
-            FontWeight.bold,
+        fontWeight: FontWeight.bold,
       ),
     );
   }
@@ -1188,7 +1567,6 @@ class _BuyPageState extends State<BuyPage> {
     return InkWell(
       borderRadius:
           BorderRadius.circular(14),
-
       onTap: _isProcessingOrder
           ? null
           : () {
@@ -1197,87 +1575,60 @@ class _BuyPageState extends State<BuyPage> {
                     value;
               });
             },
-
       child: AnimatedContainer(
         duration:
             const Duration(
           milliseconds: 180,
         ),
-
         padding:
-            const EdgeInsets.all(
-          14,
-        ),
-
-        decoration:
-            BoxDecoration(
-          color:
-              selected
-                  ? primaryOrange
-                      .withOpacity(
-                    0.08,
-                  )
-                  : Colors.white,
-
+            const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: selected
+              ? primaryOrange
+                  .withOpacity(0.08)
+              : Colors.white,
           borderRadius:
-              BorderRadius.circular(
-            14,
-          ),
-
-          border:
-              Border.all(
-            color:
-                selected
-                    ? primaryOrange
-                    : Colors.grey.shade300,
-
+              BorderRadius.circular(14),
+          border: Border.all(
+            color: selected
+                ? primaryOrange
+                : Colors.grey.shade300,
             width:
-                selected
-                    ? 1.5
-                    : 1,
+                selected ? 1.5 : 1,
           ),
         ),
-
         child: Row(
           children: [
             Container(
               width: 42,
               height: 42,
-
               decoration:
                   BoxDecoration(
-                color:
-                    selected
-                        ? primaryOrange
-                        : Colors.grey.shade100,
-
+                color: selected
+                    ? primaryOrange
+                    : Colors
+                        .grey.shade100,
                 borderRadius:
                     BorderRadius.circular(
                   10,
                 ),
               ),
-
-              child:
-                  Icon(
+              child: Icon(
                 icon,
-
-                color:
-                    selected
-                        ? Colors.white
-                        : Colors.grey.shade700,
+                color: selected
+                    ? Colors.white
+                    : Colors.grey.shade700,
               ),
             ),
 
             const SizedBox(
-              width: 12,
-            ),
+                width: 12),
 
             Expanded(
-              child:
-                  Column(
+              child: Column(
                 crossAxisAlignment:
-                    CrossAxisAlignment.start,
-
+                    CrossAxisAlignment
+                        .start,
                 children: [
                   Text(
                     title,
@@ -1290,16 +1641,14 @@ class _BuyPageState extends State<BuyPage> {
                   ),
 
                   const SizedBox(
-                    height: 3,
-                  ),
+                      height: 3),
 
                   Text(
                     subtitle,
-                    style:
-                        TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
-                      color:
-                          Colors.grey.shade600,
+                      color: Colors
+                          .grey.shade600,
                     ),
                   ),
                 ],
@@ -1307,15 +1656,11 @@ class _BuyPageState extends State<BuyPage> {
             ),
 
             Radio<String>(
-              value:
-                  value,
-
+              value: value,
               groupValue:
                   _selectedPayment,
-
               activeColor:
                   primaryOrange,
-
               onChanged:
                   _isProcessingOrder
                       ? null
@@ -1360,6 +1705,11 @@ class _BuyPageState extends State<BuyPage> {
     final price =
         _toInt(item["price"]);
 
+    final originalPrice =
+        _toInt(
+      item["originalPrice"],
+    );
+
     final quantity =
         _toInt(item["quantity"]) > 0
             ? _toInt(item["quantity"])
@@ -1368,38 +1718,34 @@ class _BuyPageState extends State<BuyPage> {
     final itemTotal =
         price * quantity;
 
+    final campaignOffer =
+        (item["campaignOffer"] ?? "")
+            .toString()
+            .trim();
+
+    final hasCampaign =
+        campaignOffer.isNotEmpty &&
+            originalPrice > price;
+
     return Container(
       margin:
           const EdgeInsets.only(
         bottom: 10,
       ),
-
       padding:
-          const EdgeInsets.all(
-        10,
-      ),
-
+          const EdgeInsets.all(10),
       decoration:
           BoxDecoration(
-        color:
-            Colors.white,
-
+        color: Colors.white,
         borderRadius:
-            BorderRadius.circular(
-          14,
-        ),
-
-        border:
-            Border.all(
-          color:
-              Colors.grey.shade200,
+            BorderRadius.circular(14),
+        border: Border.all(
+          color: Colors.grey.shade200,
         ),
       ),
-
       child: Row(
         crossAxisAlignment:
             CrossAxisAlignment.start,
-
         children: [
           // ===================================================
           // IMAGE
@@ -1407,19 +1753,13 @@ class _BuyPageState extends State<BuyPage> {
 
           ClipRRect(
             borderRadius:
-                BorderRadius.circular(
-              10,
-            ),
-
+                BorderRadius.circular(10),
             child: image.isNotEmpty
                 ? Image.network(
                     image,
-
                     width: 82,
                     height: 82,
-
                     fit: BoxFit.cover,
-
                     errorBuilder:
                         (
                       context,
@@ -1433,8 +1773,7 @@ class _BuyPageState extends State<BuyPage> {
           ),
 
           const SizedBox(
-            width: 12,
-          ),
+              width: 12),
 
           // ===================================================
           // INFO
@@ -1443,19 +1782,18 @@ class _BuyPageState extends State<BuyPage> {
           Expanded(
             child: Column(
               crossAxisAlignment:
-                  CrossAxisAlignment.start,
-
+                  CrossAxisAlignment
+                      .start,
               children: [
+                // TITLE
+
                 Text(
                   title.isEmpty
                       ? "Product"
                       : title,
-
                   maxLines: 2,
-
                   overflow:
                       TextOverflow.ellipsis,
-
                   style:
                       const TextStyle(
                     fontWeight:
@@ -1465,19 +1803,16 @@ class _BuyPageState extends State<BuyPage> {
                 ),
 
                 const SizedBox(
-                  height: 4,
-                ),
+                    height: 4),
+
+                // SELLER
 
                 Text(
                   "Sold by: $seller",
-
                   maxLines: 1,
-
                   overflow:
                       TextOverflow.ellipsis,
-
-                  style:
-                      TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     color:
                         Colors.grey.shade600,
@@ -1485,28 +1820,112 @@ class _BuyPageState extends State<BuyPage> {
                 ),
 
                 const SizedBox(
-                  height: 7,
-                ),
+                    height: 6),
+
+                // =================================================
+                // CAMPAIGN BADGE
+                // =================================================
+
+                if (hasCampaign) ...[
+                  Container(
+                    padding:
+                        const EdgeInsets
+                            .symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration:
+                        BoxDecoration(
+                      color: primaryOrange
+                          .withOpacity(
+                        0.10,
+                      ),
+                      borderRadius:
+                          BorderRadius
+                              .circular(
+                        6,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize:
+                          MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons
+                              .local_offer_rounded,
+                          size: 13,
+                          color:
+                              primaryOrange,
+                        ),
+                        const SizedBox(
+                            width: 4),
+                        Text(
+                          campaignOffer,
+                          style:
+                              const TextStyle(
+                            fontSize: 11,
+                            fontWeight:
+                                FontWeight
+                                    .bold,
+                            color:
+                                darkOrange,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(
+                      height: 6),
+                ],
+
+                // =================================================
+                // PRICE
+                // =================================================
 
                 Row(
                   mainAxisAlignment:
                       MainAxisAlignment
                           .spaceBetween,
-
+                  crossAxisAlignment:
+                      CrossAxisAlignment
+                          .end,
                   children: [
-                    Text(
-                      "₹$price × $quantity",
+                    Expanded(
+                      child: Row(
+                        children: [
+                          if (hasCampaign) ...[
+                            Text(
+                              "₹$originalPrice",
+                              style:
+                                  TextStyle(
+                                fontSize: 12,
+                                color: Colors
+                                    .grey
+                                    .shade500,
+                                decoration:
+                                    TextDecoration
+                                        .lineThrough,
+                              ),
+                            ),
+                            const SizedBox(
+                                width: 7),
+                          ],
 
-                      style:
-                          const TextStyle(
-                        fontWeight:
-                            FontWeight.w600,
+                          Text(
+                            "₹$price × $quantity",
+                            style:
+                                const TextStyle(
+                              fontWeight:
+                                  FontWeight
+                                      .w600,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
 
                     Text(
                       "₹$itemTotal",
-
                       style:
                           const TextStyle(
                         fontWeight:
@@ -1533,17 +1952,12 @@ class _BuyPageState extends State<BuyPage> {
     return Container(
       width: 82,
       height: 82,
-
-      color:
-          Colors.grey.shade100,
-
+      color: Colors.grey.shade100,
       child: Icon(
         Icons
             .image_not_supported_outlined,
-
         color:
             Colors.grey.shade400,
-
         size: 30,
       ),
     );
@@ -1563,52 +1977,34 @@ class _BuyPageState extends State<BuyPage> {
           const EdgeInsets.symmetric(
         vertical: 5,
       ),
-
       child: Row(
         mainAxisAlignment:
             MainAxisAlignment
                 .spaceBetween,
-
         children: [
           Text(
             label,
-
-            style:
-                TextStyle(
+            style: TextStyle(
               fontSize:
-                  isBold
-                      ? 17
-                      : 15,
-
-              fontWeight:
-                  isBold
-                      ? FontWeight.bold
-                      : FontWeight.normal,
-
+                  isBold ? 17 : 15,
+              fontWeight: isBold
+                  ? FontWeight.bold
+                  : FontWeight.normal,
               color:
                   Colors.grey.shade800,
             ),
           ),
-
           Text(
             "₹$amount",
-
-            style:
-                TextStyle(
+            style: TextStyle(
               fontSize:
-                  isBold
-                      ? 18
-                      : 15,
-
-              fontWeight:
-                  isBold
-                      ? FontWeight.bold
-                      : FontWeight.w500,
-
-              color:
-                  isBold
-                      ? darkOrange
-                      : Colors.grey.shade900,
+                  isBold ? 18 : 15,
+              fontWeight: isBold
+                  ? FontWeight.bold
+                  : FontWeight.w500,
+              color: isBold
+                  ? darkOrange
+                  : Colors.grey.shade900,
             ),
           ),
         ],

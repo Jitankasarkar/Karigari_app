@@ -5,6 +5,7 @@ import 'package:proto_app/screens/seller_analytics_page.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
 
 class SellerInsights extends StatefulWidget {
   const SellerInsights({super.key});
@@ -2865,6 +2866,66 @@ class _RecommendedActionAnimatedCardState
     super.dispose();
   }
 }
+
+class _ListingCandidate {
+  final ProductPerformance product;
+  final int completedOrders;
+  final double revenue;
+
+  const _ListingCandidate({
+    required this.product,
+    required this.completedOrders,
+    required this.revenue,
+  });
+}
+
+class _SavedListing {
+  String firestoreId;
+
+  final String productId;
+  final String productName;
+  final String productImageUrl;
+  final String productPrice;
+
+  final String title;
+  final String description;
+
+  final String sellerId;
+  final String sellerName;
+
+  String status;
+  bool enabled;
+
+  _SavedListing({
+    required this.firestoreId,
+    required this.productId,
+    required this.productName,
+    required this.productImageUrl,
+    required this.productPrice,
+    required this.title,
+    required this.description,
+    required this.sellerId,
+    required this.sellerName,
+    required this.status,
+    required this.enabled,
+  });
+
+  factory _SavedListing.fromFirestore(String id, Map<String, dynamic> data) {
+    return _SavedListing(
+      firestoreId: id,
+      productId: (data['productId'] ?? '').toString(),
+      productName: (data['productName'] ?? '').toString(),
+      productImageUrl: (data['productImageUrl'] ?? '').toString(),
+      productPrice: (data['productPrice'] ?? '').toString(),
+      title: (data['title'] ?? '').toString(),
+      description: (data['description'] ?? '').toString(),
+      sellerId: (data['sellerId'] ?? '').toString(),
+      sellerName: (data['sellerName'] ?? '').toString(),
+      status: (data['status'] ?? 'Approved').toString(),
+      enabled: data['enabled'] == true,
+    );
+  }
+}
 // =============================================================
 // ACTION WORKSPACE SHEET
 // =============================================================
@@ -2884,14 +2945,42 @@ class _ActionWorkspaceSheet extends StatefulWidget {
 }
 
 class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
+  int _campaignTab = 0;
 
-  
-  int _campaignTab = 0; 
+  // =============================================================
+  // LISTING WORKSPACE STATE
+  // =============================================================
 
- // Product selected in the Create Campaign tab.
+  int _listingTab = 0;
+
+  // Whether the seller is currently running the shop analysis.
+  bool _isAnalyzingShop = false;
+
+  // Current step shown in the agent-style analysis animation.
+  int _listingAnalysisStep = 0;
+
+  bool _isGeneratingListing = false;
+  int _listingGenerationStep = 0;
+
+  String _generatedListingTitle = '';
+  String _generatedListingDescription = '';
+
+  List<_SavedListing> _savedListings = [];
+  bool _isLoadingSavedListings = false;
+
+  bool _isSavingListing = false;
+
+  // Products discovered after analysing the seller's
+  // all-time completed sales.
+  List<_ListingCandidate> _listingCandidates = [];
+
+  // Product selected by the seller for the next stage.
+  ProductPerformance? _selectedListingProduct;
+
+  // Product selected in the Create Campaign tab.
   ProductPerformance? _selectedCreateProduct;
 
-// Product selected in the Generate with AI tab.
+  // Product selected in the Generate with AI tab.
   ProductPerformance? _selectedGenerateProduct;
 
   final TextEditingController _campaignNameController = TextEditingController();
@@ -2901,12 +2990,22 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
   final TextEditingController _campaignDiscountController =
       TextEditingController();
 
+  String _campaignOfferType = 'percentage';
+
   bool _isGenerating = false;
+  String _generatedCampaignReason = '';
+  Timer? _aiLoadingTimer;
+
+  int _aiLoadingStep = 0;
 
   final List<_DraftCampaign> _campaigns = [];
-  _DraftCampaign? _campaignPreview;
 
-  
+  // AI-generated campaign draft.
+  // This is NOT saved until the seller approves it.
+  _DraftCampaign? _generatedCampaignPreview;
+
+  // Manual campaign draft.
+  _DraftCampaign? _campaignPreview;
 
   // =============================================================
   // INIT STATE
@@ -2919,8 +3018,10 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
     if (widget.type == _ActionType.campaigns) {
       _loadSavedCampaigns();
     }
+    if (widget.type == _ActionType.listings) {
+      _loadSavedListings();
+    }
   }
-
 
   //bool _showCampaignSaved = false;
   void _resetCampaignForm() {
@@ -2932,67 +3033,66 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
       _campaignDiscountController.clear();
 
       _campaignPreview = null;
+      _generatedCampaignPreview = null;
+      _generatedCampaignReason = '';
     });
   }
 
   Future<void> _loadSavedCampaigns() async {
-  final user = FirebaseAuth.instance.currentUser;
+    final user = FirebaseAuth.instance.currentUser;
 
-  if (user == null) {
-    return;
+    if (user == null) {
+      return;
+    }
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('campaigns')
+          .where('sellerId', isEqualTo: user.uid)
+          .get();
+
+      final campaigns = snapshot.docs.map((doc) {
+        final data = doc.data();
+
+        return _DraftCampaign(
+          // Firestore document ID
+          firestoreId: doc.id,
+
+          name: data['name']?.toString() ?? '',
+          message: data['message']?.toString() ?? '',
+
+          // Product
+          productId: data['productId']?.toString() ?? '',
+          productName: data['productName']?.toString() ?? '',
+          productImageUrl: data['productImageUrl']?.toString() ?? '',
+
+          // Offer
+          offer: data['offer']?.toString() ?? '',
+
+          // Seller
+          sellerId: data['sellerId']?.toString() ?? '',
+          sellerName: data['sellerName']?.toString() ?? '',
+
+          // Campaign state
+          status: data['status']?.toString() ?? 'Approved',
+          enabled: data['enabled'] == true,
+
+          // AI/manual
+          generated: data['generated'] == true,
+        );
+      }).toList();
+
+      if (!mounted) return;
+
+      setState(() {
+        _campaigns
+          ..clear()
+          ..addAll(campaigns);
+      });
+    } catch (e) {
+      debugPrint('Error loading saved campaigns: $e');
+    }
   }
-
-  try {
-    final snapshot = await FirebaseFirestore.instance
-        .collection('campaigns')
-        .where('sellerId', isEqualTo: user.uid)
-        .get();
-
-    final campaigns = snapshot.docs.map((doc) {
-      final data = doc.data();
-
-      return _DraftCampaign(
-        // Firestore document ID
-        firestoreId: doc.id,
-
-        name: data['name']?.toString() ?? '',
-        message: data['message']?.toString() ?? '',
-
-        // Product
-        productId: data['productId']?.toString() ?? '',
-        productName: data['productName']?.toString() ?? '',
-        productImageUrl:
-            data['productImageUrl']?.toString() ?? '',
-
-        // Offer
-        offer: data['offer']?.toString() ?? '',
-
-        // Seller
-        sellerId: data['sellerId']?.toString() ?? '',
-        sellerName: data['sellerName']?.toString() ?? '',
-
-        // Campaign state
-        status: data['status']?.toString() ?? 'Approved',
-        enabled: data['enabled'] == true,
-
-        // AI/manual
-        generated: data['generated'] == true,
-      );
-    }).toList();
-
-    if (!mounted) return;
-
-    setState(() {
-      _campaigns
-        ..clear()
-        ..addAll(campaigns);
-    });
-  } catch (e) {
-    debugPrint(
-      'Error loading saved campaigns: $e',
-    );
-  }
-}
   // -------------------------------------------------------------
   // COLORS
   // -------------------------------------------------------------
@@ -3153,10 +3253,20 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: _purpleSoft,
+              color: widget.type == _ActionType.listings
+                  ? const Color(0xFFE9F8F4)
+                  : _purpleSoft,
               borderRadius: BorderRadius.circular(15),
             ),
-            child: const Icon(Icons.campaign_rounded, color: _purple, size: 25),
+            child: Icon(
+              widget.type == _ActionType.listings
+                  ? Icons.inventory_2_outlined
+                  : Icons.campaign_rounded,
+              color: widget.type == _ActionType.listings
+                  ? const Color(0xFF0F8A73)
+                  : _purple,
+              size: 25,
+            ),
           ),
 
           const SizedBox(width: 14),
@@ -3248,12 +3358,7 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
         return _buildCampaignWorkspace();
 
       case _ActionType.listings:
-        return _buildComingNext(
-          icon: Icons.inventory_2_outlined,
-          title: 'Listing workspace',
-          description:
-              'Review weak listings, improve titles and descriptions, and apply seller-approved listing changes.',
-        );
+        return _buildListingWorkspace();
 
       case _ActionType.bundles:
         return _buildComingNext(
@@ -3273,6 +3378,1974 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
     }
   }
 
+  // =============================================================
+  // LEAST-SOLD PRODUCTS
+  // =============================================================
+
+  // =============================================================
+  // LISTING WORKSPACE
+  // =============================================================
+
+  Widget _buildListingWorkspace() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildListingTabs(),
+
+        const SizedBox(height: 22),
+
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 250),
+          switchInCurve: Curves.easeOutCubic,
+          child: _listingTab == 0
+              ? _buildFeaturedListings()
+              : _buildSavedListings(),
+        ),
+      ],
+    );
+  }
+
+  // =============================================================
+  // LISTING TABS
+  // =============================================================
+
+  Widget _buildListingTabs() {
+    return Container(
+      padding: const EdgeInsets.all(5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE8F1EF),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          _listingTabButton(0, 'Featured', Icons.star_outline_rounded),
+          _listingTabButton(1, 'Saved', Icons.bookmark_border_rounded),
+        ],
+      ),
+    );
+  }
+
+  Widget _listingTabButton(int index, String label, IconData icon) {
+    final bool selected = _listingTab == index;
+
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          setState(() {
+            _listingTab = index;
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 10),
+          decoration: BoxDecoration(
+            color: selected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 17,
+                color: selected
+                    ? const Color(0xFF0F8A73)
+                    : const Color(0xFF667085),
+              ),
+              const SizedBox(width: 7),
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected
+                      ? const Color(0xFF0F8A73)
+                      : const Color(0xFF667085),
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // =============================================================
+  // FEATURED LISTINGS
+  // =============================================================
+
+  Widget _buildFeaturedListings() {
+    // -------------------------------------------------------------
+    // ANALYSIS IN PROGRESS
+    // -------------------------------------------------------------
+
+    if (_isAnalyzingShop) {
+      return _buildListingAnalysisLoader();
+    }
+
+    // -------------------------------------------------------------
+    // LISTING GENERATION IN PROGRESS
+    // -------------------------------------------------------------
+
+    if (_isGeneratingListing) {
+      return _buildListingGenerationLoader();
+    }
+
+    // -------------------------------------------------------------
+    // GENERATED LISTING PREVIEW
+    // -------------------------------------------------------------
+
+    if (_generatedListingTitle.isNotEmpty &&
+        _generatedListingDescription.isNotEmpty) {
+      return _buildGeneratedListingPreview();
+    }
+
+    // -------------------------------------------------------------
+    // NO ANALYSIS YET
+    // -------------------------------------------------------------
+
+    if (_listingCandidates.isEmpty) {
+      return _buildListingStart();
+    }
+
+    // -------------------------------------------------------------
+    // ANALYSIS COMPLETE
+    // -------------------------------------------------------------
+
+    return _buildListingRecommendations();
+  }
+  // =============================================================
+  // INITIAL LISTING SCREEN
+  // =============================================================
+
+  Widget _buildListingStart() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(17),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE9F8F4),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFD4EEE7)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: const Icon(
+                  Icons.visibility_outlined,
+                  color: Color(0xFF0F8A73),
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Improve product visibility',
+                      style: TextStyle(
+                        color: Color(0xFF172033),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    SizedBox(height: 5),
+                    Text(
+                      'Analyze your shop to discover products that could benefit from a stronger featured presence.',
+                      style: TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 11.5,
+                        height: 1.45,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 24),
+
+        const Text(
+          'Ready to analyze your shop?',
+          style: TextStyle(
+            color: Color(0xFF172033),
+            fontSize: 20,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.3,
+          ),
+        ),
+
+        const SizedBox(height: 7),
+
+        const Text(
+          'I’ll review your completed sales and find five products with the lowest sales activity.',
+          style: TextStyle(
+            color: Color(0xFF667085),
+            fontSize: 12.5,
+            height: 1.45,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+
+        const SizedBox(height: 22),
+
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _analyzeShopForListings,
+            icon: const Icon(Icons.analytics_outlined, size: 19),
+            label: const Text(
+              'Analyze your shop',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0F8A73),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(15),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // =============================================================
+  // SHOP ANALYSIS
+  // =============================================================
+
+  Future<void> _analyzeShopForListings() async {
+    if (_isAnalyzingShop) {
+      return;
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Please log in again.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
+    setState(() {
+      _isAnalyzingShop = true;
+      _listingAnalysisStep = 0;
+      _listingCandidates = [];
+      _selectedListingProduct = null;
+    });
+
+    try {
+      // Start the REAL Firestore calculation immediately.
+      final Future<List<_ListingCandidate>> analysisFuture =
+          _calculateLeastSoldProducts(user.uid);
+
+      const List<String> steps = [
+        'Connecting to your shop data...',
+        'Reviewing completed orders...',
+        'Comparing product performance...',
+        'Finding lower-sales products...',
+        'Preparing listing opportunities...',
+      ];
+
+      // -----------------------------------------------------------
+      // 5-SECOND ANALYSIS EXPERIENCE
+      // -----------------------------------------------------------
+
+      for (int i = 0; i < steps.length; i++) {
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _listingAnalysisStep = i;
+        });
+
+        await Future.delayed(const Duration(seconds: 1));
+      }
+
+      // -----------------------------------------------------------
+      // GET REAL RESULT
+      // -----------------------------------------------------------
+
+      final candidates = await analysisFuture;
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _listingCandidates = candidates;
+        _isAnalyzingShop = false;
+        _listingAnalysisStep = steps.length;
+      });
+    } catch (e) {
+      debugPrint('LISTING SHOP ANALYSIS ERROR: $e');
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isAnalyzingShop = false;
+        _listingAnalysisStep = 0;
+        _listingCandidates = [];
+      });
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not analyze your shop: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  // =============================================================
+  // ALL-TIME LEAST-SOLD PRODUCT CALCULATION
+  // =============================================================
+
+  Future<List<_ListingCandidate>> _calculateLeastSoldProducts(
+    String sellerId,
+  ) async {
+    // -------------------------------------------------------------
+    // SELLER CATALOGUE
+    // -------------------------------------------------------------
+
+    final List<ProductPerformance> products = List<ProductPerformance>.from(
+      widget.analytics.allProducts,
+    );
+
+    if (products.isEmpty) {
+      return [];
+    }
+
+    // -------------------------------------------------------------
+    // GET ALL SELLER ORDERS
+    // -------------------------------------------------------------
+
+    final QuerySnapshot<Map<String, dynamic>> ordersSnapshot =
+        await FirebaseFirestore.instance
+            .collection('orders')
+            .where('sellerId', isEqualTo: sellerId)
+            .get();
+
+    // productId -> completed order count
+    final Map<String, int> orderCounts = {};
+
+    // productId -> completed revenue
+    final Map<String, double> revenues = {};
+
+    // -------------------------------------------------------------
+    // PROCESS COMPLETED ORDERS
+    // -------------------------------------------------------------
+
+    for (final doc in ordersSnapshot.docs) {
+      final Map<String, dynamic> data = doc.data();
+
+      final String paymentStatus = (data['paymentStatus'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+
+      if (paymentStatus != 'done' && paymentStatus != 'completed') {
+        continue;
+      }
+
+      final String productId = (data['productId'] ?? '').toString().trim();
+
+      if (productId.isEmpty) {
+        continue;
+      }
+
+      orderCounts[productId] = (orderCounts[productId] ?? 0) + 1;
+
+      final dynamic rawPrice = data['productPrice'];
+
+      double price = 0;
+
+      if (rawPrice is num) {
+        price = rawPrice.toDouble();
+      } else {
+        price =
+            double.tryParse(
+              rawPrice?.toString().replaceAll(',', '').trim() ?? '',
+            ) ??
+            0;
+      }
+
+      revenues[productId] = (revenues[productId] ?? 0) + price;
+    }
+
+    // -------------------------------------------------------------
+    // BUILD LISTING CANDIDATES
+    // -------------------------------------------------------------
+
+    final List<_ListingCandidate> candidates = products.map((product) {
+      return _ListingCandidate(
+        product: product,
+        completedOrders: orderCounts[product.id] ?? 0,
+        revenue: revenues[product.id] ?? 0,
+      );
+    }).toList();
+
+    // -------------------------------------------------------------
+    // SORT
+    //
+    // 1. Fewest completed orders
+    // 2. Lowest revenue if tied
+    // -------------------------------------------------------------
+
+    candidates.sort((a, b) {
+      final int orderComparison = a.completedOrders.compareTo(
+        b.completedOrders,
+      );
+
+      if (orderComparison != 0) {
+        return orderComparison;
+      }
+
+      return a.revenue.compareTo(b.revenue);
+    });
+
+    // -------------------------------------------------------------
+    // TOP 5 LEAST-SOLD
+    // -------------------------------------------------------------
+
+    return candidates.take(5).toList();
+  }
+
+  // =============================================================
+  // AGENT-STYLE ANALYSIS LOADER
+  // =============================================================
+
+  Widget _buildListingAnalysisLoader() {
+    const List<Map<String, String>> steps = [
+      {
+        'title': 'Connecting to your shop data',
+        'subtitle': 'Accessing your catalogue and sales records',
+      },
+      {
+        'title': 'Reviewing completed orders',
+        'subtitle': 'Looking at your all-time completed sales',
+      },
+      {
+        'title': 'Comparing product performance',
+        'subtitle': 'Measuring sales activity across products',
+      },
+      {
+        'title': 'Finding lower-sales products',
+        'subtitle': 'Identifying products that could use more visibility',
+      },
+      {
+        'title': 'Preparing listing opportunities',
+        'subtitle': 'Organizing the best candidates for you',
+      },
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFDCEDE8)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F8A73).withOpacity(0.07),
+            blurRadius: 22,
+            offset: const Offset(0, 7),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE9F8F4),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.insights_rounded,
+                  color: Color(0xFF0F8A73),
+                  size: 22,
+                ),
+              ),
+
+              const SizedBox(width: 12),
+
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Analyzing your shop',
+                      style: TextStyle(
+                        color: Color(0xFF172033),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    SizedBox(height: 3),
+                    Text(
+                      'Working through your sales signals',
+                      style: TextStyle(
+                        color: Color(0xFF667085),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF0F8A73)),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 25),
+
+          ...List.generate(steps.length, (index) {
+            final bool completed = index < _listingAnalysisStep;
+
+            final bool current = index == _listingAnalysisStep;
+
+            final bool upcoming = index > _listingAnalysisStep;
+
+            return AnimatedOpacity(
+              duration: const Duration(milliseconds: 350),
+              opacity: upcoming ? 0.3 : 1,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      child: completed
+                          ? Container(
+                              key: const ValueKey('completed'),
+                              width: 25,
+                              height: 25,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF0F8A73),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.check_rounded,
+                                color: Colors.white,
+                                size: 15,
+                              ),
+                            )
+                          : current
+                          ? const SizedBox(
+                              key: ValueKey('current'),
+                              width: 25,
+                              height: 25,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Color(0xFF0F8A73),
+                                ),
+                              ),
+                            )
+                          : Container(
+                              key: const ValueKey('upcoming'),
+                              width: 25,
+                              height: 25,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: const Color(0xFFD7E6E2),
+                                ),
+                              ),
+                            ),
+                    ),
+
+                    const SizedBox(width: 11),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            steps[index]['title']!,
+                            style: TextStyle(
+                              color: upcoming
+                                  ? const Color(0xFF667085)
+                                  : const Color(0xFF172033),
+                              fontSize: 12,
+                              fontWeight: current || completed
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                            ),
+                          ),
+
+                          const SizedBox(height: 3),
+
+                          Text(
+                            steps[index]['subtitle']!,
+                            style: const TextStyle(
+                              color: Color(0xFF667085),
+                              fontSize: 10,
+                              height: 1.3,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // =============================================================
+  // LISTING RECOMMENDATIONS
+  // =============================================================
+
+  Widget _buildListingRecommendations() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Listing opportunities found',
+          style: TextStyle(
+            color: Color(0xFF172033),
+            fontSize: 20,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.3,
+          ),
+        ),
+
+        const SizedBox(height: 7),
+
+        const Text(
+          'Based on completed sales across your catalogue, I found these products you can consider for listing.',
+          style: TextStyle(
+            color: Color(0xFF667085),
+            fontSize: 12.5,
+            height: 1.45,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+
+        const SizedBox(height: 20),
+
+        _buildListingCarousel(),
+
+        const SizedBox(height: 20),
+
+        _buildGenerateListingButton(),
+      ],
+    );
+  }
+
+  // =============================================================
+  // HORIZONTAL PRODUCT CAROUSEL
+  // =============================================================
+
+  Widget _buildListingCarousel() {
+    return SizedBox(
+      height: 208,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.only(right: 18),
+        itemCount: _listingCandidates.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          final candidate = _listingCandidates[index];
+
+          final bool selected =
+              _selectedListingProduct?.id == candidate.product.id;
+
+          return _buildListingProductCard(candidate, selected);
+        },
+      ),
+    );
+  }
+
+  // =============================================================
+  // PRODUCT CARD
+  // =============================================================
+
+  Widget _buildListingProductCard(_ListingCandidate candidate, bool selected) {
+    final ProductPerformance product = candidate.product;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedListingProduct = product;
+        });
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        width: 166,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: selected ? const Color(0xFF0F8A73) : const Color(0xFFE1E7E5),
+            width: selected ? 2 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: selected
+                  ? const Color(0xFF0F8A73).withOpacity(0.12)
+                  : Colors.black.withOpacity(0.035),
+              blurRadius: selected ? 15 : 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // -------------------------------------------------------
+            // IMAGE
+            // -------------------------------------------------------
+
+            Stack(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  height: 105,
+                  child: product.imageUrl.isNotEmpty
+                      ? Image.network(
+                          product.imageUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const ColoredBox(
+                              color: Color(0xFFE9F8F4),
+                              child: Icon(
+                                Icons.inventory_2_outlined,
+                                color: Color(0xFF0F8A73),
+                                size: 28,
+                              ),
+                            );
+                          },
+                        )
+                      : const ColoredBox(
+                          color: Color(0xFFE9F8F4),
+                          child: Icon(
+                            Icons.inventory_2_outlined,
+                            color: Color(0xFF0F8A73),
+                            size: 28,
+                          ),
+                        ),
+                ),
+
+                if (selected)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      width: 27,
+                      height: 27,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF0F8A73),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check_rounded,
+                        color: Colors.white,
+                        size: 17,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+
+            // -------------------------------------------------------
+            // DETAILS
+            // -------------------------------------------------------
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 11),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    product.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF172033),
+                      fontSize: 12.5,
+                      height: 1.2,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  Row(
+                    children: [
+                      Text(
+                        '₹${product.price.round()}',
+                        style: const TextStyle(
+                          color: Color(0xFF0F8A73),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+
+                      const SizedBox(width: 7),
+
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF2F5F4),
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          child: Text(
+                            '${candidate.completedOrders} orders',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF667085),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // =============================================================
+  // GENERATE LISTING BUTTON
+  // =============================================================
+
+  Widget _buildGenerateListingButton() {
+    final bool enabled = _selectedListingProduct != null;
+
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: enabled ? _onGenerateListingPressed : null,
+        icon: const Icon(Icons.auto_awesome_rounded, size: 19),
+        label: const Text(
+          'Generate listing',
+          style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF0F8A73),
+          disabledBackgroundColor: const Color(0xFFDDECE8),
+          foregroundColor: Colors.white,
+          disabledForegroundColor: const Color(0xFF8AA9A1),
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // =============================================================
+  // TEMPORARY GENERATE ACTION
+  // =============================================================
+
+  Future<void> _onGenerateListingPressed() async {
+    final product = _selectedListingProduct;
+
+    if (product == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Select a product first.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
+    setState(() {
+      _isGeneratingListing = true;
+      _listingGenerationStep = 0;
+      _generatedListingTitle = '';
+      _generatedListingDescription = '';
+    });
+
+    Timer? generationTimer;
+
+    generationTimer = Timer.periodic(const Duration(milliseconds: 900), (
+      timer,
+    ) {
+      if (!mounted || !_isGeneratingListing) {
+        timer.cancel();
+        return;
+      }
+
+      if (_listingGenerationStep < 3) {
+        setState(() {
+          _listingGenerationStep++;
+        });
+      }
+    });
+
+    try {
+      final model = FirebaseAI.googleAI(
+        appCheck: FirebaseAppCheck.instance,
+      ).generativeModel(model: 'gemini-3.5-flash-lite');
+
+      final prompt =
+          '''
+You are creating a buyer-facing featured listing for an artisan marketplace.
+
+The seller has already selected this exact product.
+
+PRODUCT:
+Name: ${product.name}
+Price: ₹${product.price.round()}
+Product ID: ${product.id}
+Seller: ${product.sellerName}
+
+IMPORTANT RULES:
+- You MUST write the listing for this exact product.
+- Do NOT choose another product.
+- Do NOT change the product name into a different product.
+- Do NOT invent materials, features, craftsmanship details, origin, certifications, guarantees, or specifications.
+- Do NOT invent discounts or prices.
+- The existing product image and price will be used by the app.
+- Create attractive buyer-facing copy.
+- Keep the title short and appealing.
+- Description should be 2-3 sentences.
+- Do not mention AI, analytics, sales, orders, or that the product has low sales.
+- Do not mention any discount.
+
+Return ONLY this format:
+
+TITLE: <short buyer-facing title>
+DESCRIPTION: <2-3 sentence buyer-facing description>
+''';
+
+      final response = await model
+          .generateContent([Content.text(prompt)])
+          .timeout(const Duration(seconds: 30));
+
+      generationTimer?.cancel();
+
+      final text = response.text?.trim() ?? '';
+
+      String title = '';
+      String description = '';
+
+      for (final line in text.split('\n')) {
+        final trimmed = line.trim();
+
+        if (trimmed.toUpperCase().startsWith('TITLE:')) {
+          title = trimmed.substring(6).trim();
+        } else if (trimmed.toUpperCase().startsWith('DESCRIPTION:')) {
+          description = trimmed.substring(12).trim();
+        }
+      }
+
+      if (title.isEmpty || description.isEmpty) {
+        throw Exception('Invalid AI response');
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _generatedListingTitle = title;
+        _generatedListingDescription = description;
+        _isGeneratingListing = false;
+        _listingGenerationStep = 3;
+      });
+    } on TimeoutException {
+      generationTimer?.cancel();
+
+      if (!mounted) return;
+
+      setState(() {
+        _isGeneratingListing = false;
+        _listingGenerationStep = 0;
+      });
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('AI generation timed out. Please try again.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } catch (e) {
+      generationTimer?.cancel();
+
+      if (!mounted) return;
+
+      setState(() {
+        _isGeneratingListing = false;
+        _listingGenerationStep = 0;
+      });
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not generate listing: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  //GENERATE ANIMATION////////
+
+  Widget _buildListingGenerationLoader() {
+    const steps = [
+      'Connecting to your product data...',
+      'Understanding the product...',
+      'Crafting the buyer-facing message...',
+      'Polishing the listing...',
+    ];
+
+    final int step = _listingGenerationStep.clamp(0, steps.length - 1);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE9F8F4),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFBFE8DE)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F8A73),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: const Icon(
+              Icons.auto_awesome_rounded,
+              color: Colors.white,
+              size: 28,
+            ),
+          ),
+
+          const SizedBox(height: 18),
+
+          const Text(
+            'Creating your listing',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF17352F),
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: Text(
+              steps[step],
+              key: ValueKey(step),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 13, color: Color(0xFF66827B)),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: const LinearProgressIndicator(
+              minHeight: 5,
+              backgroundColor: Color(0xFFD5EEE8),
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF0F8A73)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGeneratedListingPreview() {
+    final product = _selectedListingProduct;
+
+    if (product == null ||
+        _generatedListingTitle.isEmpty ||
+        _generatedListingDescription.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    const green = Color(0xFF0F8A73);
+    const greenLight = Color(0xFFE9F8F4);
+    const textDark = Color(0xFF17201E);
+    const textMedium = Color(0xFF61736E);
+    const border = Color(0xFFDCE9E5);
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.045),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // =========================================================
+          // HEADER
+          // =========================================================
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+            decoration: const BoxDecoration(
+              color: greenLight,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.visibility_outlined, size: 18, color: green),
+                const SizedBox(width: 8),
+                const Text(
+                  'BUYER PREVIEW',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                    color: green,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'Featured',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      color: green,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // =========================================================
+          // PRODUCT CONTENT
+          // =========================================================
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 15),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ---------------------------------------------------
+                // PRODUCT IMAGE
+                // ---------------------------------------------------
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(17),
+                  child: AspectRatio(
+                    // Wider ratio = shorter card
+                    aspectRatio: 1.55,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        product.imageUrl.isNotEmpty
+                            ? Image.network(
+                                product.imageUrl,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) {
+                                  return Container(
+                                    color: const Color(0xFFF2F5F4),
+                                    child: const Icon(
+                                      Icons.image_outlined,
+                                      size: 38,
+                                      color: Color(0xFF9BAFA9),
+                                    ),
+                                  );
+                                },
+                              )
+                            : Container(
+                                color: const Color(0xFFF2F5F4),
+                                child: const Icon(
+                                  Icons.image_outlined,
+                                  size: 38,
+                                  color: Color(0xFF9BAFA9),
+                                ),
+                              ),
+
+                        // Featured badge on image
+                        Positioned(
+                          top: 10,
+                          left: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.12),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.star_rounded,
+                                  size: 14,
+                                  color: green,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Featured',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: green,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 13),
+
+                // ---------------------------------------------------
+                // TITLE
+                // ---------------------------------------------------
+                Text(
+                  _generatedListingTitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    height: 1.2,
+                    fontWeight: FontWeight.w800,
+                    color: textDark,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+
+                const SizedBox(height: 6),
+
+                // ---------------------------------------------------
+                // DESCRIPTION
+                // ---------------------------------------------------
+                Text(
+                  _generatedListingDescription,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: textMedium,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+
+                const SizedBox(height: 11),
+
+                // ---------------------------------------------------
+                // PRICE
+                // ---------------------------------------------------
+                Text(
+                  '₹${product.price.round()}',
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                    color: green,
+                  ),
+                ),
+
+                const SizedBox(height: 15),
+
+                // ---------------------------------------------------
+                // ACTION BUTTONS
+                // ---------------------------------------------------
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _isSavingListing
+                            ? null
+                            : () {
+                                setState(() {
+                                  _generatedListingTitle = '';
+                                  _generatedListingDescription = '';
+                                  _listingGenerationStep = 0;
+                                  _selectedListingProduct = null;
+                                });
+                              },
+                        icon: const Icon(Icons.close_rounded, size: 17),
+                        label: const Text(
+                          'Reject',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF53635F),
+                          side: const BorderSide(color: Color(0xFFD5DFDC)),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(13),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(width: 10),
+
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton.icon(
+                        onPressed: _isSavingListing
+                            ? null
+                            : _approveAndSaveListing,
+                        icon: const Icon(Icons.check_rounded, size: 17),
+                        label: Text(
+                          _isSavingListing ? 'Saving...' : 'Approve & save',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: green,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: const Color(0xFF9BCDC2),
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(13),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =============================================================
+  // SAVED LISTINGS
+  // =============================================================
+
+  Widget _buildSavedListings() {
+    if (_isLoadingSavedListings) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 50),
+          child: CircularProgressIndicator(color: Color(0xFF0F8A73)),
+        ),
+      );
+    }
+
+    if (_savedListings.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 42),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7FAF9),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFE0E9E6)),
+        ),
+        child: const Column(
+          children: [
+            Icon(
+              Icons.bookmark_border_rounded,
+              size: 42,
+              color: Color(0xFF8DA29C),
+            ),
+            SizedBox(height: 14),
+            Text(
+              'No saved listings yet',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF263A35),
+              ),
+            ),
+            SizedBox(height: 6),
+            Text(
+              'Create a featured listing from the Featured tab.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Color(0xFF71827D)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: _savedListings.map((listing) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: _buildSavedListingCard(listing),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildSavedListingCard(_SavedListing listing) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: listing.enabled
+              ? const Color(0xFF9AD9CC)
+              : const Color(0xFFE0E9E6),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.035),
+            blurRadius: 12,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(13),
+            child: SizedBox(
+              width: 78,
+              height: 78,
+              child: listing.productImageUrl.isNotEmpty
+                  ? Image.network(
+                      listing.productImageUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) {
+                        return Container(
+                          color: const Color(0xFFF2F5F4),
+                          child: const Icon(
+                            Icons.image_outlined,
+                            color: Color(0xFF9BAFA9),
+                          ),
+                        );
+                      },
+                    )
+                  : Container(
+                      color: const Color(0xFFF2F5F4),
+                      child: const Icon(
+                        Icons.image_outlined,
+                        color: Color(0xFF9BAFA9),
+                      ),
+                    ),
+            ),
+          ),
+
+          const SizedBox(width: 13),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        listing.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF1D2B28),
+                        ),
+                      ),
+                    ),
+
+                    PopupMenuButton<String>(
+                      padding: EdgeInsets.zero,
+                      icon: const Icon(
+                        Icons.more_vert_rounded,
+                        size: 20,
+                        color: Color(0xFF72827D),
+                      ),
+                      onSelected: (value) {
+                        if (value == 'delete') {
+                          _deleteListing(listing);
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.delete_outline_rounded,
+                                size: 18,
+                                color: Colors.redAccent,
+                              ),
+                              SizedBox(width: 9),
+                              Text('Delete'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 5),
+
+                Text(
+                  listing.productName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF778681),
+                  ),
+                ),
+
+                const SizedBox(height: 8),
+
+                Row(
+                  children: [
+                    Text(
+                      '₹${listing.productPrice}',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF0F8A73),
+                      ),
+                    ),
+
+                    const Spacer(),
+
+                    Switch.adaptive(
+                      value: listing.enabled,
+                      activeColor: const Color(0xFF0F8A73),
+                      onChanged: (value) {
+                        _toggleListing(listing, value);
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleListing(_SavedListing listing, bool enable) async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) return;
+
+    try {
+      final firestore = FirebaseFirestore.instance;
+
+      if (enable) {
+        final activeSnapshot = await firestore
+            .collection('listing')
+            .where('sellerId', isEqualTo: user.uid)
+            .where('enabled', isEqualTo: true)
+            .get();
+
+        final batch = firestore.batch();
+
+        for (final doc in activeSnapshot.docs) {
+          if (doc.id != listing.firestoreId) {
+            batch.update(doc.reference, {
+              'enabled': false,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+          }
+        }
+
+        batch.update(firestore.collection('listing').doc(listing.firestoreId), {
+          'enabled': true,
+          'status': 'Approved',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        await batch.commit();
+
+        if (!mounted) return;
+
+        setState(() {
+          for (final item in _savedListings) {
+            item.enabled = item.firestoreId == listing.firestoreId;
+          }
+        });
+      } else {
+        await firestore.collection('listing').doc(listing.firestoreId).update({
+          'enabled': false,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        if (!mounted) return;
+
+        setState(() {
+          listing.enabled = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not update listing: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  Future<void> _deleteListing(_SavedListing listing) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete listing?'),
+          content: const Text(
+            'This featured listing will be permanently removed.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text(
+                'Delete',
+                style: TextStyle(
+                  color: Color(0xFFC0392B),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldDelete != true) {
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('listing')
+          .doc(listing.firestoreId)
+          .delete();
+
+      if (!mounted) return;
+
+      setState(() {
+        _savedListings.removeWhere(
+          (item) => item.firestoreId == listing.firestoreId,
+        );
+      });
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Listing deleted.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not delete listing: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  Future<void> _loadSavedListings() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) return;
+
+    setState(() {
+      _isLoadingSavedListings = true;
+    });
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('listing')
+          .where('sellerId', isEqualTo: user.uid)
+          .get();
+
+      final listings = snapshot.docs
+          .map((doc) => _SavedListing.fromFirestore(doc.id, doc.data()))
+          .toList();
+
+      listings.sort((a, b) {
+        if (a.enabled != b.enabled) {
+          return a.enabled ? -1 : 1;
+        }
+
+        return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+      });
+
+      if (!mounted) return;
+
+      setState(() {
+        _savedListings = listings;
+        _isLoadingSavedListings = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoadingSavedListings = false;
+      });
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not load saved listings: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  //==========================================================
+  //APPROVE AND SAVE LISTING
+  //==========================================================
+  Future<void> _approveAndSaveListing() async {
+    final product = _selectedListingProduct;
+
+    if (product == null ||
+        _generatedListingTitle.trim().isEmpty ||
+        _generatedListingDescription.trim().isEmpty) {
+      return;
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Please log in first.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
+    if (_isSavingListing) {
+      return;
+    }
+
+    setState(() {
+      _isSavingListing = true;
+    });
+
+    try {
+      final sellerName = product.sellerName.isNotEmpty
+          ? product.sellerName
+          : (user.displayName ?? '');
+
+      final title = _generatedListingTitle.trim();
+      final description = _generatedListingDescription.trim();
+      final price = product.price.round().toString();
+
+      final listingRef = await FirebaseFirestore.instance
+          .collection('listing')
+          .add({
+            'productId': product.id,
+            'productName': product.name,
+            'productImageUrl': product.imageUrl,
+            'productPrice': price,
+
+            'title': title,
+            'description': description,
+
+            'sellerId': user.uid,
+            'sellerName': sellerName,
+
+            'status': 'Approved',
+            'enabled': false,
+            'generated': true,
+
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+      final savedListing = _SavedListing(
+        firestoreId: listingRef.id,
+        productId: product.id,
+        productName: product.name,
+        productImageUrl: product.imageUrl,
+        productPrice: price,
+        title: title,
+        description: description,
+        sellerId: user.uid,
+        sellerName: sellerName,
+        status: 'Approved',
+        enabled: false,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _savedListings.insert(0, savedListing);
+
+        _generatedListingTitle = '';
+        _generatedListingDescription = '';
+
+        _selectedListingProduct = null;
+        _listingCandidates = [];
+
+        _isSavingListing = false;
+
+        // Move to Saved tab.
+        _listingTab = 1;
+      });
+
+      await _showListingSavedDialog();
+
+      if (!mounted) return;
+
+      setState(() {
+        _listingTab = 1;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isSavingListing = false;
+      });
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not save listing: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  Future<void> _showListingSavedDialog() async {
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return const _ListingSavedDialog();
+      },
+    );
+  }
   // =============================================================
   // CAMPAIGN WORKSPACE
   // =============================================================
@@ -3413,301 +5486,285 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
   // CAMPAIGN PRODUCT SELECTOR
   // =============================================================
 
-  Widget _buildProductSelector({
-  required bool isGenerate,
-}) {
-  final List<ProductPerformance> products =
-      widget.analytics.allProducts;
+  Widget _buildProductSelector({required bool isGenerate}) {
+    final List<ProductPerformance> products = widget.analytics.allProducts;
 
-  // Which product belongs to this workflow?
-  final ProductPerformance? selectedProduct =
-      isGenerate
-          ? _selectedGenerateProduct
-          : _selectedCreateProduct;
+    // Which product belongs to this workflow?
+    final ProductPerformance? selectedProduct = isGenerate
+        ? _selectedGenerateProduct
+        : _selectedCreateProduct;
 
-  // -------------------------------------------------------------
-  // NO PRODUCTS
-  // -------------------------------------------------------------
+    // -------------------------------------------------------------
+    // NO PRODUCTS
+    // -------------------------------------------------------------
 
-  if (products.isEmpty) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _border),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: _purpleSoft,
-              borderRadius: BorderRadius.circular(12),
+    if (products.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _border),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: _purpleSoft,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.inventory_2_outlined,
+                color: _purple,
+                size: 22,
+              ),
             ),
-            child: const Icon(
-              Icons.inventory_2_outlined,
-              color: _purple,
-              size: 22,
+
+            const SizedBox(width: 12),
+
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'No products available',
+                    style: TextStyle(
+                      color: _textDark,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SizedBox(height: 3),
+                  Text(
+                    'Add a product to your catalogue first.',
+                    style: TextStyle(
+                      color: _textMedium,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // -------------------------------------------------------------
+    // PRODUCT SELECTOR
+    // -------------------------------------------------------------
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Choose a product',
+          style: TextStyle(
+            color: _textDark,
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+
+        const SizedBox(height: 6),
+
+        Text(
+          isGenerate
+              ? 'Select the product you want AI to create a campaign for.'
+              : 'Select the product you want to use for this campaign.',
+          style: const TextStyle(
+            color: _textMedium,
+            fontSize: 12,
+            height: 1.35,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+
+        const SizedBox(height: 11),
+
+        Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(
+              color: selectedProduct != null
+                  ? _purple.withOpacity(0.55)
+                  : _border,
+              width: selectedProduct != null ? 1.4 : 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.025),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<ProductPerformance>(
+              value: selectedProduct,
+              isExpanded: true,
+
+              icon: const Padding(
+                padding: EdgeInsets.only(right: 12),
+                child: Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: _purple,
+                  size: 25,
+                ),
+              ),
+
+              borderRadius: BorderRadius.circular(15),
+              dropdownColor: Colors.white,
+
+              // -----------------------------------------------------
+              // HINT
+              // -----------------------------------------------------
+              hint: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 15),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.inventory_2_outlined,
+                      color: _textLight,
+                      size: 20,
+                    ),
+                    SizedBox(width: 11),
+                    Text(
+                      'Select a product',
+                      style: TextStyle(
+                        color: _textLight,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // -----------------------------------------------------
+              // PRODUCTS
+              // -----------------------------------------------------
+              items: products.map((product) {
+                return DropdownMenuItem<ProductPerformance>(
+                  value: product,
+
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 15),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: _purpleSoft,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+
+                          child: product.imageUrl.isNotEmpty
+                              ? Image.network(
+                                  product.imageUrl,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return const Icon(
+                                      Icons.inventory_2_outlined,
+                                      color: _purple,
+                                      size: 19,
+                                    );
+                                  },
+                                )
+                              : const Icon(
+                                  Icons.inventory_2_outlined,
+                                  color: _purple,
+                                  size: 19,
+                                ),
+                        ),
+
+                        const SizedBox(width: 11),
+
+                        Expanded(
+                          child: Text(
+                            product.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _textDark,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+
+              // -----------------------------------------------------
+              // SELECTION
+              // -----------------------------------------------------
+              onChanged: (ProductPerformance? value) {
+                setState(() {
+                  if (isGenerate) {
+                    _selectedGenerateProduct = value;
+                  } else {
+                    _selectedCreateProduct = value;
+                  }
+                });
+              },
             ),
           ),
+        ),
 
-          const SizedBox(width: 12),
+        // -----------------------------------------------------------
+        // SELECTED PRODUCT PREVIEW
+        // -----------------------------------------------------------
+        if (selectedProduct != null) ...[
+          const SizedBox(height: 10),
 
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: _purpleVerySoft,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _purple.withOpacity(0.10)),
+            ),
+            child: Row(
               children: [
-                Text(
-                  'No products available',
-                  style: TextStyle(
-                    color: _textDark,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                  ),
+                const Icon(
+                  Icons.check_circle_rounded,
+                  color: _purple,
+                  size: 17,
                 ),
-                SizedBox(height: 3),
-                Text(
-                  'Add a product to your catalogue first.',
-                  style: TextStyle(
-                    color: _textMedium,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+
+                const SizedBox(width: 8),
+
+                Expanded(
+                  child: Text(
+                    'Selected: ${selectedProduct.name}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _purpleDark,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
         ],
-      ),
+      ],
     );
   }
-
-  // -------------------------------------------------------------
-  // PRODUCT SELECTOR
-  // -------------------------------------------------------------
-
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const Text(
-        'Choose a product',
-        style: TextStyle(
-          color: _textDark,
-          fontSize: 14,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-
-      const SizedBox(height: 6),
-
-      Text(
-        isGenerate
-            ? 'Select the product you want AI to create a campaign for.'
-            : 'Select the product you want to use for this campaign.',
-        style: const TextStyle(
-          color: _textMedium,
-          fontSize: 12,
-          height: 1.35,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-
-      const SizedBox(height: 11),
-
-      Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(
-            color: selectedProduct != null
-                ? _purple.withOpacity(0.55)
-                : _border,
-            width: selectedProduct != null ? 1.4 : 1,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.025),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<ProductPerformance>(
-            value: selectedProduct,
-            isExpanded: true,
-
-            icon: const Padding(
-              padding: EdgeInsets.only(right: 12),
-              child: Icon(
-                Icons.keyboard_arrow_down_rounded,
-                color: _purple,
-                size: 25,
-              ),
-            ),
-
-            borderRadius: BorderRadius.circular(15),
-            dropdownColor: Colors.white,
-
-            // -----------------------------------------------------
-            // HINT
-            // -----------------------------------------------------
-
-            hint: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 15),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.inventory_2_outlined,
-                    color: _textLight,
-                    size: 20,
-                  ),
-                  SizedBox(width: 11),
-                  Text(
-                    'Select a product',
-                    style: TextStyle(
-                      color: _textLight,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // -----------------------------------------------------
-            // PRODUCTS
-            // -----------------------------------------------------
-
-            items: products.map((product) {
-              return DropdownMenuItem<ProductPerformance>(
-                value: product,
-
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 15,
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 38,
-                        height: 38,
-                        decoration: BoxDecoration(
-                          color: _purpleSoft,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-
-                        child: product.imageUrl.isNotEmpty
-                            ? Image.network(
-                                product.imageUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder:
-                                    (context, error, stackTrace) {
-                                  return const Icon(
-                                    Icons.inventory_2_outlined,
-                                    color: _purple,
-                                    size: 19,
-                                  );
-                                },
-                              )
-                            : const Icon(
-                                Icons.inventory_2_outlined,
-                                color: _purple,
-                                size: 19,
-                              ),
-                      ),
-
-                      const SizedBox(width: 11),
-
-                      Expanded(
-                        child: Text(
-                          product.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: _textDark,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }).toList(),
-
-            // -----------------------------------------------------
-            // SELECTION
-            // -----------------------------------------------------
-
-            onChanged: (ProductPerformance? value) {
-              setState(() {
-                if (isGenerate) {
-                  _selectedGenerateProduct = value;
-                } else {
-                  _selectedCreateProduct = value;
-                }
-              });
-            },
-          ),
-        ),
-      ),
-
-      // -----------------------------------------------------------
-      // SELECTED PRODUCT PREVIEW
-      // -----------------------------------------------------------
-
-      if (selectedProduct != null) ...[
-        const SizedBox(height: 10),
-
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 10,
-          ),
-          decoration: BoxDecoration(
-            color: _purpleVerySoft,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: _purple.withOpacity(0.10),
-            ),
-          ),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.check_circle_rounded,
-                color: _purple,
-                size: 17,
-              ),
-
-              const SizedBox(width: 8),
-
-              Expanded(
-                child: Text(
-                  'Selected: ${selectedProduct.name}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _purpleDark,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ],
-  );
-}
   // =============================================================
   // GENERATE CAMPAIGN
   // =============================================================
@@ -3743,50 +5800,15 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
         // ---------------------------------------------------------
         // PRODUCT SELECTOR
         // ---------------------------------------------------------
-        _buildProductSelector(
-          isGenerate: true,
-        ),
+        _buildProductSelector(isGenerate: true),
 
         const SizedBox(height: 18),
 
         // ---------------------------------------------------------
-        // GENERATING STATE
+        // GENERATING STATE / GENERATE BUTTON
         // ---------------------------------------------------------
         if (_isGenerating)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: _purpleVerySoft,
-              borderRadius: BorderRadius.circular(17),
-              border: Border.all(color: _purple.withOpacity(0.12)),
-            ),
-            child: const Row(
-              children: [
-                SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.2,
-                    color: _purple,
-                  ),
-                ),
-
-                SizedBox(width: 12),
-
-                Expanded(
-                  child: Text(
-                    'AI is creating a campaign from your selected product...',
-                    style: TextStyle(
-                      color: _textMedium,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          )
+          _buildAiGeneratingLoader()
         else
           SizedBox(
             width: double.infinity,
@@ -3816,9 +5838,16 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
         const SizedBox(height: 16),
 
         // ---------------------------------------------------------
-        // GENERATED CAMPAIGN
+        // GENERATED CAMPAIGN DRAFT
         // ---------------------------------------------------------
-        if (_campaigns.isNotEmpty) _buildGeneratedDraft(_campaigns.last),
+        //
+        // IMPORTANT:
+        // Only show the AI-generated preview here.
+        // Never use _campaigns.last because _campaigns
+        // contains saved campaigns from both Create and AI.
+        // ---------------------------------------------------------
+        if (_generatedCampaignPreview != null)
+          _buildGeneratedDraft(_generatedCampaignPreview!),
       ],
     );
   }
@@ -3845,252 +5874,665 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
       return;
     }
 
+    // -----------------------------------------------------------
+    // START GENERATING
+    // -----------------------------------------------------------
+
     setState(() {
       _isGenerating = true;
+      _generatedCampaignPreview = null;
+      _generatedCampaignReason = '';
+
+      // Start loading animation from:
+      // Thinking...
+      _aiLoadingStep = 0;
     });
 
-    await Future.delayed(const Duration(milliseconds: 850));
+    // -----------------------------------------------------------
+    // START AI LOADING ANIMATION
+    // -----------------------------------------------------------
 
-    if (!mounted) return;
+    _aiLoadingTimer?.cancel();
 
-    final campaign = _DraftCampaign(
-      name: '${selectedProduct.name} Spotlight',
+    _aiLoadingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (!mounted || !_isGenerating) {
+        timer.cancel();
+        return;
+      }
 
-      message:
-          'Discover ${selectedProduct.name}, a featured handmade pick from this artisan.',
-
-      
-
-      // Product information
-      productId: selectedProduct.id,
-      productName: selectedProduct.name,
-      productImageUrl: selectedProduct.imageUrl,
-
-        // Seller information
-      sellerId: selectedProduct.sellerId,
-      sellerName: selectedProduct.sellerName,
-
-
-      // No offer for now
-      offer: '',
-
-      status: 'Needs approval',
-
-      enabled: false,
-
-      generated: true,
-    );
-
-    setState(() {
-      _isGenerating = false;
-
-      _campaigns.add(campaign);
+      setState(() {
+        if (_aiLoadingStep < 3) {
+          _aiLoadingStep++;
+        }
+      });
     });
+
+    try {
+      // ---------------------------------------------------------
+      // PRODUCT DATA
+      // ---------------------------------------------------------
+
+      final productData =
+          '''
+SELECTED PRODUCT
+Name: ${selectedProduct.name}
+Product ID: ${selectedProduct.id}
+Current catalogue price: ₹${selectedProduct.price.toStringAsFixed(0)}
+
+Observed completed orders: ${selectedProduct.orders}
+Observed revenue: ₹${selectedProduct.revenue.toStringAsFixed(0)}
+Revenue share of seller shop: ${selectedProduct.share.toStringAsFixed(1)}%
+
+Seller: ${selectedProduct.sellerName}
+''';
+
+      // ---------------------------------------------------------
+      // SHOP CONTEXT
+      // ---------------------------------------------------------
+
+      final shopData =
+          '''
+SELLER SHOP ANALYTICS
+
+Total completed orders: ${widget.analytics.completedOrders}
+Total revenue: ₹${widget.analytics.periodRevenue.toStringAsFixed(0)}
+Average order value: ₹${widget.analytics.averageOrderValue.toStringAsFixed(0)}
+Active products: ${widget.analytics.activeProducts}
+Products without completed sales: ${widget.analytics.unusedProducts}
+Pending orders: ${widget.analytics.pendingOrders}
+''';
+
+      // ---------------------------------------------------------
+      // GEMINI MODEL
+      // ---------------------------------------------------------
+
+      final model = FirebaseAI.googleAI(
+        appCheck: FirebaseAppCheck.instance,
+      ).generativeModel(model: 'gemini-3.6-flash');
+
+      // ---------------------------------------------------------
+      // PROMPT
+      // ---------------------------------------------------------
+
+      final prompt =
+          '''
+You are a campaign strategist for a small artisan marketplace seller.
+
+The seller has ALREADY selected the product.
+
+You MUST create a campaign ONLY for the selected product.
+
+Do not select, recommend, replace, or switch to another product.
+
+SELECTED PRODUCT:
+$productData
+
+SHOP CONTEXT:
+$shopData
+
+Your task is to create ONE practical promotional campaign.
+
+Return EXACTLY this format:
+
+CAMPAIGN NAME:
+<short campaign name>
+
+DISCOUNT:
+<whole number between 5 and 25>
+
+MESSAGE:
+<short buyer-facing promotional message>
+
+REASON:
+<short explanation based ONLY on the supplied analytics>
+
+IMPORTANT RULES:
+
+1. The selected product is fixed.
+2. Never choose another product.
+3. Never invent product features.
+4. Never invent customer preferences.
+5. Never invent statistics.
+6. Never claim that customers prefer something unless the supplied data proves it.
+7. The discount MUST be a whole number from 5 to 25.
+8. Use the selected product's actual sales signals when choosing the discount.
+9. Stronger existing sales signals should generally result in a smaller/moderate discount.
+10. Weak or zero sales signals may justify a stronger discount.
+11. Do not guarantee increased sales or revenue.
+12. The MESSAGE must NOT contain any percentage or discount number.
+13. The REASON must NOT contain any percentage or discount number.
+14. The MESSAGE must not mention a specific price.
+15. The REASON must use only the supplied analytics.
+16. Do not mention Gemini or AI.
+17. Campaign name: maximum 6 words.
+18. Buyer message: maximum 30 words.
+19. Reason: maximum 35 words.
+
+VERY IMPORTANT:
+
+The app will display the discount separately.
+
+Therefore, NEVER write things such as:
+"Enjoy 20% off"
+"Save 15%"
+"20% discount"
+"10% off"
+
+inside MESSAGE or REASON.
+
+Only put the numerical discount in the DISCOUNT field.
+
+The selected product's name may be used in the message.
+
+Do not fabricate any additional information.
+''';
+
+      debugPrint('CAMPAIGN AI: sending request');
+
+      // ---------------------------------------------------------
+      // GENERATE CONTENT
+      // ---------------------------------------------------------
+
+      final response = await model.generateContent([Content.text(prompt)]);
+
+      final text = response.text?.trim() ?? '';
+
+      debugPrint('CAMPAIGN AI RESPONSE: $text');
+
+      if (!mounted) return;
+
+      // ---------------------------------------------------------
+      // STOP LOADING TIMER
+      // ---------------------------------------------------------
+
+      _aiLoadingTimer?.cancel();
+      _aiLoadingTimer = null;
+
+      // Show "Almost done..." briefly.
+      setState(() {
+        _aiLoadingStep = 3;
+      });
+
+      await Future.delayed(const Duration(milliseconds: 700));
+
+      if (!mounted) return;
+
+      // ---------------------------------------------------------
+      // PARSE AI RESPONSE
+      // ---------------------------------------------------------
+
+      String campaignName = '';
+      String message = '';
+
+      // We intentionally do NOT trust AI's reason.
+      //
+      // The reason will be generated below from the actual
+      // analytics values so it can never contain false statistics.
+      int discount = 0;
+
+      final lines = text.split('\n');
+
+      String currentSection = '';
+
+      for (final rawLine in lines) {
+        final line = rawLine.trim();
+
+        if (line.isEmpty) {
+          continue;
+        }
+
+        final lower = line.toLowerCase();
+
+        // -------------------------------------------------------
+        // CAMPAIGN NAME
+        // -------------------------------------------------------
+
+        if (lower.startsWith('campaign name:')) {
+          currentSection = 'name';
+
+          campaignName = line.substring('campaign name:'.length).trim();
+
+          continue;
+        }
+
+        // -------------------------------------------------------
+        // DISCOUNT
+        // -------------------------------------------------------
+
+        if (lower.startsWith('discount:')) {
+          currentSection = 'discount';
+
+          final valueText = line.substring('discount:'.length).trim();
+
+          discount =
+              int.tryParse(
+                valueText.replaceAll('%', '').replaceAll('off', '').trim(),
+              ) ??
+              0;
+
+          continue;
+        }
+
+        // -------------------------------------------------------
+        // MESSAGE
+        // -------------------------------------------------------
+
+        if (lower.startsWith('message:')) {
+          currentSection = 'message';
+
+          message = line.substring('message:'.length).trim();
+
+          continue;
+        }
+
+        // -------------------------------------------------------
+        // REASON
+        // -------------------------------------------------------
+
+        if (lower.startsWith('reason:')) {
+          // We intentionally ignore AI's reason.
+          //
+          // We still change the section so any continuation
+          // lines belonging to REASON are ignored.
+          currentSection = 'reason';
+
+          continue;
+        }
+
+        // -------------------------------------------------------
+        // CONTINUATION LINES
+        // -------------------------------------------------------
+
+        if (currentSection == 'message') {
+          message = '$message $line'.trim();
+        }
+
+        // Do NOT append anything from the AI reason.
+      }
+
+      // ---------------------------------------------------------
+      // VALIDATE DISCOUNT
+      // ---------------------------------------------------------
+
+      if (discount < 5 || discount > 25) {
+        discount = 10;
+      }
+
+      // ---------------------------------------------------------
+      // FALLBACK CAMPAIGN NAME
+      // ---------------------------------------------------------
+
+      if (campaignName.isEmpty) {
+        campaignName = '${selectedProduct.name} Special';
+      }
+
+      // ---------------------------------------------------------
+      // FALLBACK MESSAGE
+      // ---------------------------------------------------------
+
+      if (message.isEmpty) {
+        message =
+            'Discover ${selectedProduct.name} with a special offer for a limited time.';
+      }
+
+      // ---------------------------------------------------------
+      // CLEAN AI MESSAGE
+      //
+      // Even though the prompt tells Gemini not to include
+      // percentages, remove them here as a final safety check.
+      //
+      // This guarantees that the message can never say
+      // "Enjoy 20%" while the actual offer is 10%.
+      // ---------------------------------------------------------
+
+      message = message
+          .replaceAll(
+            RegExp(r'\b\d{1,3}\s*%\s*(off|discount)?\b', caseSensitive: false),
+            '',
+          )
+          .replaceAll(
+            RegExp(r'\b\d{1,3}\s*percent\b', caseSensitive: false),
+            '',
+          )
+          .replaceAll(RegExp(r'\s{2,}'), ' ')
+          .trim();
+
+      // If removing the percentage made the message empty,
+      // use a safe fallback.
+      if (message.isEmpty) {
+        message =
+            'Discover ${selectedProduct.name} with a special offer for a limited time.';
+      }
+
+      // ---------------------------------------------------------
+      // CREATE TRUSTWORTHY REASON
+      // ---------------------------------------------------------
+      //
+      // IMPORTANT:
+      // Do NOT use the AI-generated reason here.
+      //
+      // This reason is generated by the app from the real
+      // ProductPerformance analytics.
+      //
+      // Therefore:
+      // - orders are real
+      // - revenue share is real
+      // - discount matches the actual offer
+      // - no contradictory 20% / 10% situation
+      // ---------------------------------------------------------
+
+      final productOrders = selectedProduct.orders;
+      final revenueShare = selectedProduct.share;
+
+      String reason;
+
+      if (productOrders == 0 && revenueShare <= 0) {
+        reason =
+            'This product has no completed orders yet, so the suggested offer is intended as a stronger test to attract initial buyer interest.';
+      } else if (productOrders <= 2 && revenueShare < 5) {
+        reason =
+            'This product has limited sales activity and a small revenue contribution, so the suggested offer is a moderate way to encourage more buyer interest.';
+      } else if (productOrders <= 2 && revenueShare >= 5) {
+        reason =
+            'This product has some completed sales and contributes meaningfully to shop revenue, so a moderate offer can encourage further purchases without relying on a heavy discount.';
+      } else if (revenueShare >= 15) {
+        reason =
+            'This product already contributes strongly to shop revenue, so a moderate offer can support further purchases without relying on a large discount.';
+      } else {
+        reason =
+            'This product has established sales activity, so the suggested offer provides a balanced promotional incentive based on its observed performance.';
+      }
+
+      // ---------------------------------------------------------
+      // CREATE AI DRAFT
+      // ---------------------------------------------------------
+
+      final campaign = _DraftCampaign(
+        name: campaignName,
+        message: message,
+
+        // -------------------------------------------------------
+        // PRODUCT
+        // -------------------------------------------------------
+        productId: selectedProduct.id,
+        productName: selectedProduct.name,
+        productImageUrl: selectedProduct.imageUrl,
+
+        // -------------------------------------------------------
+        // OFFER
+        //
+        // This is the ONLY source of truth for the discount.
+        // -------------------------------------------------------
+        offer: '$discount% off',
+
+        // -------------------------------------------------------
+        // SELLER
+        // -------------------------------------------------------
+        sellerId: selectedProduct.sellerId,
+        sellerName: selectedProduct.sellerName,
+
+        // -------------------------------------------------------
+        // STATE
+        // -------------------------------------------------------
+        status: 'Needs approval',
+        enabled: false,
+
+        // -------------------------------------------------------
+        // AI GENERATED
+        // -------------------------------------------------------
+        generated: true,
+      );
+
+      // ---------------------------------------------------------
+      // SHOW PREVIEW
+      // ---------------------------------------------------------
+
+      setState(() {
+        _isGenerating = false;
+        _generatedCampaignPreview = campaign;
+        _generatedCampaignReason = reason;
+        _aiLoadingStep = 3;
+      });
+
+      debugPrint(
+        'CAMPAIGN READY: '
+        '${selectedProduct.name} | '
+        '$discount% off | '
+        'orders=$productOrders | '
+        'share=${revenueShare.toStringAsFixed(1)}%',
+      );
+    } catch (e, stackTrace) {
+      debugPrint('CAMPAIGN AI ERROR: $e');
+      debugPrint('CAMPAIGN AI STACKTRACE: $stackTrace');
+
+      // ---------------------------------------------------------
+      // STOP LOADING TIMER
+      // ---------------------------------------------------------
+
+      _aiLoadingTimer?.cancel();
+      _aiLoadingTimer = null;
+
+      if (!mounted) return;
+
+      setState(() {
+        _isGenerating = false;
+        _generatedCampaignPreview = null;
+        _generatedCampaignReason = '';
+        _aiLoadingStep = 0;
+      });
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not generate campaign: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
   }
 
   // =============================================================
-  // GENERATED DRAFT
+  // REJECT AI GENERATED CAMPAIGN
+  // =============================================================
+
+  void _rejectGeneratedCampaign() {
+    setState(() {
+      _generatedCampaignPreview = null;
+      _generatedCampaignReason = '';
+      _aiLoadingStep = 0;
+    });
+  }
+
+  Widget _buildAiGeneratingLoader() {
+    const steps = [
+      (title: 'Thinking...', subtitle: 'Understanding your selected product'),
+      (title: 'Reasoning...', subtitle: 'Reviewing your sales signals'),
+      (title: 'Generating...', subtitle: 'Creating your campaign'),
+      (title: 'Almost done...', subtitle: 'Finalizing your campaign'),
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE8E4F5)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: _purpleSoft,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(
+                  Icons.auto_awesome_rounded,
+                  color: _purple,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'AI is working',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: _textDark,
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 20),
+
+          ...List.generate(steps.length, (index) {
+            final isCompleted = index < _aiLoadingStep;
+            final isCurrent = index == _aiLoadingStep;
+            final isUpcoming = index > _aiLoadingStep;
+
+            return AnimatedOpacity(
+              duration: const Duration(milliseconds: 350),
+              opacity: isUpcoming ? 0.35 : 1.0,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      child: isCompleted
+                          ? Container(
+                              key: const ValueKey('completed'),
+                              width: 24,
+                              height: 24,
+                              decoration: const BoxDecoration(
+                                color: _purple,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.check,
+                                color: Colors.white,
+                                size: 14,
+                              ),
+                            )
+                          : isCurrent
+                          ? SizedBox(
+                              key: const ValueKey('current'),
+                              width: 24,
+                              height: 24,
+                              child: const CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  _purple,
+                                ),
+                              ),
+                            )
+                          : Container(
+                              key: const ValueKey('upcoming'),
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: const Color(0xFFD8D4E5),
+                                ),
+                              ),
+                            ),
+                    ),
+
+                    const SizedBox(width: 11),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          AnimatedDefaultTextStyle(
+                            duration: const Duration(milliseconds: 300),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: isCurrent || isCompleted
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                              color: isUpcoming ? _textMedium : _textDark,
+                            ),
+                            child: Text(steps[index].title),
+                          ),
+
+                          const SizedBox(height: 3),
+
+                          Text(
+                            steps[index].subtitle,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: _textMedium,
+                              height: 1.3,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // =============================================================
+  // GENERATED CAMPAIGN PREVIEW
   // =============================================================
 
   Widget _buildGeneratedDraft(_DraftCampaign campaign) {
-  return Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(19),
-      border: Border.all(
-        color: const Color(0xFFE1DEFF),
-      ),
-      boxShadow: [
-        BoxShadow(
-          color: _purple.withOpacity(0.06),
-          blurRadius: 18,
-          offset: const Offset(0, 6),
-        ),
-      ],
-    ),
-    child: Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // =========================================================
-        // HEADER
-        // =========================================================
-
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 9,
-                vertical: 6,
-              ),
-              decoration: BoxDecoration(
-                color: _purpleSoft,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.auto_awesome_rounded,
-                    color: _purple,
-                    size: 12,
-                  ),
-                  SizedBox(width: 4),
-                  Text(
-                    'AI DRAFT',
-                    style: TextStyle(
-                      color: _purple,
-                      fontSize: 8,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const Spacer(),
-
-            Text(
-              campaign.status,
-              style: const TextStyle(
-                color: Color(0xFFE28A1B),
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 15),
-
-        // =========================================================
-        // CAMPAIGN NAME
-        // =========================================================
-
-        Text(
-          campaign.name,
-          style: const TextStyle(
+        const Text(
+          'Review campaign',
+          style: TextStyle(
             color: _textDark,
-            fontSize: 17,
+            fontSize: 22,
             fontWeight: FontWeight.w800,
+            letterSpacing: -0.4,
           ),
         ),
 
-        const SizedBox(height: 7),
+        const SizedBox(height: 6),
 
-        // =========================================================
-        // CAMPAIGN MESSAGE
-        // =========================================================
-
-        Text(
-          campaign.message,
-          style: const TextStyle(
+        const Text(
+          'Preview how your AI-generated campaign will appear to buyers before saving it.',
+          style: TextStyle(
             color: _textMedium,
-            fontSize: 12,
-            height: 1.5,
+            fontSize: 13,
+            height: 1.45,
+            fontWeight: FontWeight.w500,
           ),
         ),
 
-        const SizedBox(height: 17),
+        const SizedBox(height: 20),
 
-        // =========================================================
-        // ACTIONS
-        // =========================================================
-
-        Row(
-          children: [
-            // =======================================================
-            // REJECT
-            // =======================================================
-
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  setState(() {
-                    campaign.status = 'Rejected';
-                    _campaignPreview = null;
-                  });
-                },
-                icon: const Icon(
-                  Icons.close_rounded,
-                  size: 17,
-                ),
-                label: const Text(
-                  'Reject',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _textMedium,
-                  side: const BorderSide(
-                    color: _border,
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 14,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(13),
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(width: 10),
-
-            // =======================================================
-            // APPROVE & SAVE
-            // =======================================================
-
-            Expanded(
-              flex: 2,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  // -------------------------------------------------
-                  // Use the central approval method.
-                  //
-                  // _approveCampaign() is now responsible for:
-                  // 1. Saving campaign to Firestore
-                  // 2. Adding it to _campaigns
-                  // 3. Clearing the preview
-                  // 4. Showing success dialog
-                  // 5. Moving to Saved tab
-                  // -------------------------------------------------
-
-                  await _approveCampaign();
-                },
-                icon: const Icon(
-                  Icons.check_rounded,
-                  size: 18,
-                ),
-                label: const Text(
-                  'Approve & save',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _purple,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 14,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(13),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+        _buildCampaignPreview(campaign, isGenerated: true),
       ],
-    ),
-  );
-}
+    );
+  }
   // =============================================================
   // CREATE CAMPAIGN
   // =============================================================
@@ -4165,9 +6607,7 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
         // ---------------------------------------------------------
         // PRODUCT SELECTOR
         // ---------------------------------------------------------
-        _buildProductSelector(
-          isGenerate: false,
-        ),
+        _buildProductSelector(isGenerate: false),
 
         const SizedBox(height: 20),
 
@@ -4197,13 +6637,14 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
         const SizedBox(height: 15),
 
         // ---------------------------------------------------------
-        // OFFER / PRICE
+        // OFFER / DISCOUNT
         // ---------------------------------------------------------
         _field(
           controller: _campaignDiscountController,
-          label: 'Offer / price',
+          label: 'Offer / discount',
           hint: 'Optional — e.g. 10% off',
-          keyboardType: TextInputType.text,
+          keyboardType: const TextInputType.numberWithOptions(decimal: false),
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           icon: Icons.sell_outlined,
         ),
 
@@ -4215,9 +6656,7 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: _selectedCreateProduct == null
-                ? null
-                : _createCampaign,
+            onPressed: _selectedCreateProduct == null ? null : _createCampaign,
             icon: const Icon(Icons.add_rounded, size: 20),
             label: const Text(
               'Create campaign',
@@ -4241,10 +6680,57 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
   }
 
   // =============================================================
+  // CAMPAIGN PRICE HELPERS
+  // =============================================================
+
+  double _campaignDiscountPercentage(String offer) {
+    final match = RegExp(r'(\d+(?:\.\d+)?)').firstMatch(offer);
+
+    if (match == null) {
+      return 0;
+    }
+
+    return double.tryParse(match.group(1) ?? '') ?? 0;
+  }
+
+  double _campaignDiscountedPrice(double originalPrice, String offer) {
+    final discount = _campaignDiscountPercentage(offer);
+
+    if (originalPrice <= 0 || discount <= 0) {
+      return originalPrice;
+    }
+
+    final discounted = originalPrice * (1 - discount / 100);
+
+    // Your app uses rounded rupee pricing.
+    return discounted.roundToDouble();
+  }
+  // =============================================================
   // CAMPAIGN PREVIEW
   // =============================================================
 
-  Widget _buildCampaignPreview(_DraftCampaign campaign) {
+  Widget _buildCampaignPreview(
+    _DraftCampaign campaign, {
+    bool isGenerated = false,
+  }) {
+    final ProductPerformance? product = widget.analytics.allProducts
+        .cast<ProductPerformance?>()
+        .firstWhere(
+          (item) => item?.id == campaign.productId,
+          orElse: () => null,
+        );
+
+    final double originalPrice = product?.price ?? 0;
+
+    final double discountedPrice = _campaignDiscountedPrice(
+      originalPrice,
+      campaign.offer,
+    );
+
+    final bool hasDiscount =
+        originalPrice > 0 &&
+        discountedPrice > 0 &&
+        discountedPrice < originalPrice;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
@@ -4407,41 +6893,72 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
                       ),
 
                       // ------------------------------------------------
-                      // OFFER
+                      // OFFER + PRICE
                       // ------------------------------------------------
                       if (campaign.offer.isNotEmpty) ...[
                         const SizedBox(height: 13),
 
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 7,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _purpleSoft,
-                            borderRadius: BorderRadius.circular(9),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.local_offer_outlined,
-                                color: _purple,
-                                size: 15,
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // Discount badge
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 7,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _purpleSoft,
+                                borderRadius: BorderRadius.circular(9),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.local_offer_outlined,
+                                    color: _purple,
+                                    size: 15,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    campaign.offer,
+                                    style: const TextStyle(
+                                      color: _purple,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            if (hasDiscount) ...[
+                              const SizedBox(width: 12),
+
+                              // Original price
+                              Text(
+                                '₹${originalPrice.round()}',
+                                style: const TextStyle(
+                                  color: _textLight,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.lineThrough,
+                                ),
                               ),
 
-                              const SizedBox(width: 6),
+                              const SizedBox(width: 7),
 
+                              // Discounted price
                               Text(
-                                campaign.offer,
+                                '₹${discountedPrice.round()}',
                                 style: const TextStyle(
-                                  color: _purple,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w800,
+                                  color: _textDark,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
                                 ),
                               ),
                             ],
-                          ),
+                          ],
                         ),
                       ],
                     ],
@@ -4461,20 +6978,42 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
           // -------------------------------------------------------
           // ACTION BUTTONS
           // -------------------------------------------------------
+          // -------------------------------------------------------
+          // ACTION BUTTONS
+          // -------------------------------------------------------
+          // -------------------------------------------------------
+          // ACTION BUTTONS
+          // -------------------------------------------------------
           Row(
             children: [
-              // EDIT
+              // -----------------------------------------------------
+              // EDIT / REJECT
+              // -----------------------------------------------------
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () {
                     setState(() {
-                      _campaignPreview = null;
+                      if (isGenerated) {
+                        // AI campaign → reject generated draft
+                        _generatedCampaignPreview = null;
+                        _generatedCampaignReason = '';
+                        _aiLoadingStep = 0;
+                      } else {
+                        // Manual campaign → return to editing
+                        _campaignPreview = null;
+                      }
                     });
                   },
-                  icon: const Icon(Icons.edit_outlined, size: 17),
-                  label: const Text(
-                    'Edit',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                  icon: Icon(
+                    isGenerated ? Icons.close_rounded : Icons.edit_outlined,
+                    size: 17,
+                  ),
+                  label: Text(
+                    isGenerated ? 'Reject' : 'Edit',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: _textMedium,
@@ -4489,13 +7028,13 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
 
               const SizedBox(width: 10),
 
+              // -----------------------------------------------------
               // APPROVE & SAVE
+              // -----------------------------------------------------
               Expanded(
                 flex: 2,
                 child: ElevatedButton.icon(
-                  onPressed: () {
-                    _approveCampaign();
-                  },
+                  onPressed: _approveCampaign,
                   icon: const Icon(Icons.check_rounded, size: 18),
                   label: const Text(
                     'Approve & save',
@@ -4523,175 +7062,163 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
   // APPROVE & SAVE CAMPAIGN
   // =============================================================
 
- Future<void> _approveCampaign() async {
-  final preview = _campaignPreview;
+  Future<void> _approveCampaign() async {
+    final preview = _campaignPreview ?? _generatedCampaignPreview;
 
-  if (preview == null) {
-    return;
+    if (preview == null) {
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // GET CURRENT SELLER
+    // -------------------------------------------------------------
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Please log in again.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // SAVE CAMPAIGN
+    // -------------------------------------------------------------
+
+    try {
+      final campaignRef = await FirebaseFirestore.instance
+          .collection('campaigns')
+          .add({
+            // Campaign information
+            'name': preview.name,
+            'message': preview.message,
+            'offer': preview.offer,
+
+            // Product information
+            'productId': preview.productId,
+            'productName': preview.productName,
+            'productImageUrl': preview.productImageUrl,
+
+            // Seller information
+            'sellerId': preview.sellerId.isNotEmpty
+                ? preview.sellerId
+                : user.uid,
+            'sellerName': preview.sellerName,
+
+            // Campaign state
+            'status': 'Approved',
+            'enabled': false,
+
+            // AI / manual
+            'generated': preview.generated,
+
+            // Timestamps
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+      // -------------------------------------------------------------
+      // SAVE FIRESTORE DOCUMENT ID
+      // -------------------------------------------------------------
+
+      preview.firestoreId = campaignRef.id;
+
+      // -------------------------------------------------------------
+      // UPDATE LOCAL STATE
+      // -------------------------------------------------------------
+
+      if (!mounted) return;
+
+      setState(() {
+        preview.status = 'Approved';
+        preview.enabled = false;
+
+        _campaigns.add(preview);
+
+        _campaignPreview = null;
+        _generatedCampaignPreview = null;
+
+        // Reset form
+        _selectedCreateProduct = null;
+        _selectedGenerateProduct = null;
+
+        _campaignNameController.clear();
+        _campaignTextController.clear();
+        _campaignDiscountController.clear();
+      });
+
+      // -------------------------------------------------------------
+      // SHOW SUCCESS DIALOG
+      // -------------------------------------------------------------
+
+      await _showCampaignApprovedDialog();
+
+      // -------------------------------------------------------------
+      // AFTER DIALOG CLOSES → GO TO SAVED TAB
+      // -------------------------------------------------------------
+
+      if (!mounted) return;
+
+      setState(() {
+        _campaignTab = 2;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not save campaign: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
   }
 
-  // -------------------------------------------------------------
-  // GET CURRENT SELLER
-  // -------------------------------------------------------------
+  //APPROVE DIALOG BOX
 
-  final user = FirebaseAuth.instance.currentUser;
-
-  if (user == null) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('Please log in again.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-    return;
+  Future<void> _showCampaignApprovedDialog() async {
+    await showGeneralDialog(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: 'Campaign approved',
+      barrierColor: Colors.black.withOpacity(0.55),
+      transitionDuration: const Duration(milliseconds: 350),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return const SizedBox.shrink();
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return Center(
+          child: ScaleTransition(
+            scale: CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutBack,
+            ),
+            child: FadeTransition(
+              opacity: animation,
+              child: const _CampaignApprovedDialogContent(),
+            ),
+          ),
+        );
+      },
+    );
   }
-
-  // -------------------------------------------------------------
-  // SAVE CAMPAIGN
-  // -------------------------------------------------------------
-
-  try {
-    final campaignRef = await FirebaseFirestore.instance
-        .collection('campaigns')
-        .add({
-      // Campaign information
-      'name': preview.name,
-      'message': preview.message,
-      'offer': preview.offer,
-
-      // Product information
-      'productId': preview.productId,
-      'productName': preview.productName,
-      'productImageUrl': preview.productImageUrl,
-
-      // Seller information
-      'sellerId': preview.sellerId.isNotEmpty
-          ? preview.sellerId
-          : user.uid,
-      'sellerName': preview.sellerName,
-
-      // Campaign state
-      'status': 'Approved',
-      'enabled': false,
-
-      // AI / manual
-      'generated': preview.generated,
-
-      // Timestamps
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-
-    // -------------------------------------------------------------
-    // SAVE FIRESTORE DOCUMENT ID
-    // -------------------------------------------------------------
-
-    preview.firestoreId = campaignRef.id;
-
-    // -------------------------------------------------------------
-    // UPDATE LOCAL STATE
-    // -------------------------------------------------------------
-
-    if (!mounted) return;
-
-    setState(() {
-      preview.status = 'Approved';
-      preview.enabled = false;
-
-      _campaigns.add(preview);
-
-      _campaignPreview = null;
-
-      // Reset form
-      _selectedCreateProduct = null;
-      _selectedGenerateProduct = null;
-
-      _campaignNameController.clear();
-      _campaignTextController.clear();
-      _campaignDiscountController.clear();
-    });
-
-    // -------------------------------------------------------------
-    // SHOW SUCCESS DIALOG
-    // -------------------------------------------------------------
-
-    await _showCampaignApprovedDialog();
-
-    // -------------------------------------------------------------
-    // AFTER DIALOG CLOSES → GO TO SAVED TAB
-    // -------------------------------------------------------------
-
-    if (!mounted) return;
-
-    setState(() {
-      _campaignTab = 2;
-    });
-  } catch (e) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not save campaign: $e',
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-  }
-}
-
-
-//APPROVE DIALOG BOX
-
-Future<void> _showCampaignApprovedDialog() async {
-  await showGeneralDialog(
-    context: context,
-    barrierDismissible: false,
-    barrierLabel: 'Campaign approved',
-    barrierColor: Colors.black.withOpacity(0.55),
-    transitionDuration: const Duration(
-      milliseconds: 350,
-    ),
-    pageBuilder: (
-      context,
-      animation,
-      secondaryAnimation,
-    ) {
-      return const SizedBox.shrink();
-    },
-    transitionBuilder: (
-      context,
-      animation,
-      secondaryAnimation,
-      child,
-    ) {
-      return Center(
-        child: ScaleTransition(
-          scale: CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutBack,
-          ),
-          child: FadeTransition(
-            opacity: animation,
-            child: const _CampaignApprovedDialogContent(),
-          ),
-        ),
-      );
-    },
-  );
-}
   //=========================================
   // INPUT FIELD
   // =============================================================
 
   Widget _field({
+    List<TextInputFormatter>? inputFormatters,
     required TextEditingController controller,
     required String label,
     required String hint,
@@ -4778,22 +7305,26 @@ Future<void> _showCampaignApprovedDialog() async {
   // =============================================================
 
   void _createCampaign() {
+    // ---------------------------------------------------------
+    // GET FORM VALUES
+    // ---------------------------------------------------------
+
     final name = _campaignNameController.text.trim();
     final message = _campaignTextController.text.trim();
-    final offer = _campaignDiscountController.text.trim();
-
-    // -------------------------------------------------------------
-    // CHECK PRODUCT
-    // -------------------------------------------------------------
+    final offerValue = _campaignDiscountController.text.trim();
 
     final ProductPerformance? selectedProduct = _selectedCreateProduct;
+
+    // ---------------------------------------------------------
+    // VALIDATE PRODUCT
+    // ---------------------------------------------------------
 
     if (selectedProduct == null) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(
-            content: Text('Choose a product for this campaign.'),
+            content: Text('Please select a product first.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -4801,16 +7332,16 @@ Future<void> _showCampaignApprovedDialog() async {
       return;
     }
 
-    // -------------------------------------------------------------
-    // CHECK CAMPAIGN DETAILS
-    // -------------------------------------------------------------
+    // ---------------------------------------------------------
+    // VALIDATE NAME AND MESSAGE
+    // ---------------------------------------------------------
 
     if (name.isEmpty || message.isEmpty) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(
-            content: Text('Add a campaign name and buyer-facing message.'),
+            content: Text('Please enter the campaign name and message.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -4818,39 +7349,63 @@ Future<void> _showCampaignApprovedDialog() async {
       return;
     }
 
-    // -------------------------------------------------------------
-    // CREATE PREVIEW
-    // -------------------------------------------------------------
-    //
-    // IMPORTANT:
-    // We DO NOT add this to _campaigns yet.
-    //
-    // The seller must first see the buyer-side preview
-    // and approve it.
-    // -------------------------------------------------------------
+    // ---------------------------------------------------------
+    // VALIDATE OFFER / DISCOUNT
+    // ---------------------------------------------------------
+
+    String offer = '';
+
+    if (offerValue.isNotEmpty) {
+      final value = int.tryParse(offerValue);
+
+      if (value == null || value <= 0 || value > 100) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Enter a discount between 1% and 100%.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+
+        return;
+      }
+
+      // Convert "10" into "10% off"
+      offer = '$value% off';
+    }
+
+    // ---------------------------------------------------------
+    // CREATE CAMPAIGN PREVIEW
+    // ---------------------------------------------------------
 
     final preview = _DraftCampaign(
       name: name,
-
       message: message,
 
+      // Product
       productId: selectedProduct.id,
-
       productName: selectedProduct.name,
-
       productImageUrl: selectedProduct.imageUrl,
 
+      // Offer
       offer: offer,
 
+      // Seller
       sellerId: selectedProduct.sellerId,
       sellerName: selectedProduct.sellerName,
 
+      // Campaign state
       status: 'Needs approval',
-
       enabled: false,
 
+      // This is a manual campaign
       generated: false,
     );
+
+    // ---------------------------------------------------------
+    // SHOW PREVIEW
+    // ---------------------------------------------------------
 
     setState(() {
       _campaignPreview = preview;
@@ -4954,259 +7509,325 @@ Future<void> _showCampaignApprovedDialog() async {
   }
 
   // =============================================================
-// CAMPAIGN ROW
-// =============================================================
+  // CAMPAIGN ROW
+  // =============================================================
 
-Widget _buildCampaignRow(_DraftCampaign campaign) {
-  // A campaign can only be enabled/disabled after approval.
-  final approved =
-      campaign.status == 'Approved' ||
-      campaign.status == 'Active';
+  Widget _buildCampaignRow(_DraftCampaign campaign) {
+    // A campaign can only be enabled/disabled after approval.
+    final approved =
+        campaign.status == 'Approved' || campaign.status == 'Active';
 
-  return Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(17),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(18),
-      border: Border.all(
-        color: campaign.enabled
-            ? _purple.withOpacity(0.35)
-            : _border,
-      ),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.025),
-          blurRadius: 12,
-          offset: const Offset(0, 4),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(17),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: campaign.enabled ? _purple.withOpacity(0.35) : _border,
         ),
-      ],
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-
-        // =========================================================
-        // CAMPAIGN NAME + STATUS
-        // =========================================================
-
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                campaign.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: _textDark,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-
-            const SizedBox(width: 8),
-
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 5,
-              ),
-              decoration: BoxDecoration(
-                color: campaign.enabled
-                    ? const Color(0xFFE9F8F4)
-                    : const Color(0xFFF2F3F6),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                campaign.enabled
-                    ? 'ACTIVE'
-                    : campaign.status.toUpperCase(),
-                style: TextStyle(
-                  color: campaign.enabled
-                      ? const Color(0xFF0F8A73)
-                      : _textMedium,
-                  fontSize: 8,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 8),
-
-        // =========================================================
-        // CAMPAIGN MESSAGE
-        // =========================================================
-
-        Text(
-          campaign.message,
-          style: const TextStyle(
-            color: _textMedium,
-            fontSize: 11.5,
-            height: 1.45,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.025),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
-        ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // =========================================================
+          // CAMPAIGN NAME + STATUS
+          // =========================================================
 
-        const SizedBox(height: 16),
-
-        // =========================================================
-        // ACTION BUTTONS
-        // =========================================================
-
-        Row(
-          children: [
-
-            // =====================================================
-            // DELETE
-            // =====================================================
-
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => _deleteCampaign(campaign),
-
-                icon: const Icon(
-                  Icons.delete_outline_rounded,
-                  size: 17,
-                ),
-
-                label: const Text(
-                  'Delete',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFFC23B42),
-                  side: const BorderSide(
-                    color: Color(0xFFE8BFC2),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 12,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(width: 9),
-
-            // =====================================================
-            // ENABLE / DISABLE
-            // =====================================================
-
-            Expanded(
-              flex: 2,
-              child: ElevatedButton(
-                onPressed: approved
-                    ? () => _toggleCampaign(campaign)
-                    : null,
-
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: campaign.enabled
-                      ? const Color(0xFFFCEBEC)
-                      : _purple,
-
-                  disabledBackgroundColor:
-                      const Color(0xFFEDEBF8),
-
-                  foregroundColor: campaign.enabled
-                      ? const Color(0xFFC23B42)
-                      : Colors.white,
-
-                  disabledForegroundColor:
-                      const Color(0xFF9A94C7),
-
-                  elevation: 0,
-
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 12,
-                  ),
-
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-
+          Row(
+            children: [
+              Expanded(
                 child: Text(
-                  campaign.enabled
-                      ? 'Disable'
-                      : 'Enable',
-
+                  campaign.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 11,
+                    color: _textDark,
+                    fontSize: 15,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
-}
-  // =============================================================
-// TOGGLE CAMPAIGN
-// =============================================================
 
-Future<void> _toggleCampaign(
-  _DraftCampaign campaign,
-) async {
-  if (campaign.firestoreId.isEmpty) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Campaign is not linked to Firestore.',
+              const SizedBox(width: 8),
+
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                decoration: BoxDecoration(
+                  color: campaign.enabled
+                      ? const Color(0xFFE9F8F4)
+                      : const Color(0xFFF2F3F6),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  campaign.enabled ? 'ACTIVE' : campaign.status.toUpperCase(),
+                  style: TextStyle(
+                    color: campaign.enabled
+                        ? const Color(0xFF0F8A73)
+                        : _textMedium,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
           ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
 
-    return;
+          const SizedBox(height: 8),
+
+          // =========================================================
+          // CAMPAIGN MESSAGE
+          // =========================================================
+          Text(
+            campaign.message,
+            style: const TextStyle(
+              color: _textMedium,
+              fontSize: 11.5,
+              height: 1.45,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // =========================================================
+          // ACTION BUTTONS
+          // =========================================================
+          Row(
+            children: [
+              // =====================================================
+              // DELETE
+              // =====================================================
+
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _deleteCampaign(campaign),
+
+                  icon: const Icon(Icons.delete_outline_rounded, size: 17),
+
+                  label: const Text(
+                    'Delete',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                  ),
+
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFC23B42),
+                    side: const BorderSide(color: Color(0xFFE8BFC2)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(width: 9),
+
+              // =====================================================
+              // ENABLE / DISABLE
+              // =====================================================
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  onPressed: approved ? () => _toggleCampaign(campaign) : null,
+
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: campaign.enabled
+                        ? const Color(0xFFFCEBEC)
+                        : _purple,
+
+                    disabledBackgroundColor: const Color(0xFFEDEBF8),
+
+                    foregroundColor: campaign.enabled
+                        ? const Color(0xFFC23B42)
+                        : Colors.white,
+
+                    disabledForegroundColor: const Color(0xFF9A94C7),
+
+                    elevation: 0,
+
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+
+                  child: Text(
+                    campaign.enabled ? 'Disable' : 'Enable',
+
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
+  // =============================================================
+  // TOGGLE CAMPAIGN
+  // =============================================================
 
-  final user = FirebaseAuth.instance.currentUser;
+  Future<void> _toggleCampaign(_DraftCampaign campaign) async {
+    if (campaign.firestoreId.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Campaign is not linked to Firestore.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
 
-  if (user == null) {
-    return;
-  }
+      return;
+    }
 
-  // -------------------------------------------------------------
-  // DISABLE CURRENT CAMPAIGN
-  // -------------------------------------------------------------
+    final user = FirebaseAuth.instance.currentUser;
 
-  if (campaign.enabled) {
+    if (user == null) {
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // DISABLE CURRENT CAMPAIGN
+    // -------------------------------------------------------------
+
+    if (campaign.enabled) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('campaigns')
+            .doc(campaign.firestoreId)
+            .update({
+              'enabled': false,
+              'status': 'Approved',
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+
+        if (!mounted) return;
+
+        setState(() {
+          campaign.enabled = false;
+          campaign.status = 'Approved';
+        });
+
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Campaign disabled.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      } catch (e) {
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Could not disable campaign: $e'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      }
+
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // ENABLE CAMPAIGN
+    // -------------------------------------------------------------
+
     try {
-      await FirebaseFirestore.instance
+      final firestore = FirebaseFirestore.instance;
+
+      final snapshot = await firestore
           .collection('campaigns')
-          .doc(campaign.firestoreId)
-          .update({
-        'enabled': false,
-        'status': 'Approved',
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+          .where('sellerId', isEqualTo: user.uid)
+          .get();
+
+      final batch = firestore.batch();
+
+      // -----------------------------------------------------------
+      // Disable all other campaigns belonging to this seller
+      // -----------------------------------------------------------
+
+      for (final doc in snapshot.docs) {
+        if (doc.id == campaign.firestoreId) {
+          continue;
+        }
+
+        final data = doc.data();
+
+        if (data['enabled'] == true) {
+          batch.update(doc.reference, {
+            'enabled': false,
+            'status': 'Approved',
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+
+      // -----------------------------------------------------------
+      // Enable selected campaign
+      // -----------------------------------------------------------
+
+      batch
+          .update(firestore.collection('campaigns').doc(campaign.firestoreId), {
+            'enabled': true,
+            'status': 'Active',
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+      // -----------------------------------------------------------
+      // Commit everything together
+      // -----------------------------------------------------------
+
+      await batch.commit();
+
+      // -----------------------------------------------------------
+      // Update local state
+      // -----------------------------------------------------------
 
       if (!mounted) return;
 
       setState(() {
-        campaign.enabled = false;
-        campaign.status = 'Approved';
+        for (final other in _campaigns) {
+          if (other.firestoreId != campaign.firestoreId) {
+            other.enabled = false;
+
+            if (other.status == 'Active') {
+              other.status = 'Approved';
+            }
+          }
+        }
+
+        campaign.enabled = true;
+        campaign.status = 'Active';
       });
+
+      // -----------------------------------------------------------
+      // SUCCESS MESSAGE
+      // -----------------------------------------------------------
 
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(
-            content: Text('Campaign disabled.'),
+            content: Text('Campaign is now active.'),
             behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
           ),
         );
     } catch (e) {
@@ -5216,203 +7837,77 @@ Future<void> _toggleCampaign(
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text(
-              'Could not disable campaign: $e',
-            ),
+            content: Text('Could not activate campaign: $e'),
             behavior: SnackBarBehavior.floating,
           ),
         );
     }
-
-    return;
   }
 
-  // -------------------------------------------------------------
-  // ENABLE CAMPAIGN
-  // -------------------------------------------------------------
+  //delete campaign
 
-  try {
-    final firestore = FirebaseFirestore.instance;
-
-    final snapshot = await firestore
-        .collection('campaigns')
-        .where(
-          'sellerId',
-          isEqualTo: user.uid,
-        )
-        .get();
-
-    final batch = firestore.batch();
-
-    // -----------------------------------------------------------
-    // Disable all other campaigns belonging to this seller
-    // -----------------------------------------------------------
-
-    for (final doc in snapshot.docs) {
-      if (doc.id == campaign.firestoreId) {
-        continue;
-      }
-
-      final data = doc.data();
-
-      if (data['enabled'] == true) {
-        batch.update(
-          doc.reference,
-          {
-            'enabled': false,
-            'status': 'Approved',
-            'updatedAt': FieldValue.serverTimestamp(),
-          },
+  Future<void> _deleteCampaign(_DraftCampaign campaign) async {
+    if (campaign.firestoreId.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Campaign is not linked to Firestore.'),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
-      }
+
+      return;
     }
 
-    // -----------------------------------------------------------
-    // Enable selected campaign
-    // -----------------------------------------------------------
+    try {
+      // -----------------------------------------------------------
+      // DELETE FROM FIRESTORE
+      // -----------------------------------------------------------
 
-    batch.update(
-      firestore
+      await FirebaseFirestore.instance
           .collection('campaigns')
-          .doc(campaign.firestoreId),
-      {
-        'enabled': true,
-        'status': 'Active',
-        'updatedAt': FieldValue.serverTimestamp(),
-      },
-    );
+          .doc(campaign.firestoreId)
+          .delete();
 
-    // -----------------------------------------------------------
-    // Commit everything together
-    // -----------------------------------------------------------
+      // -----------------------------------------------------------
+      // DELETE FROM LOCAL STATE
+      // -----------------------------------------------------------
 
-    await batch.commit();
+      if (!mounted) return;
 
-    // -----------------------------------------------------------
-    // Update local state
-    // -----------------------------------------------------------
+      setState(() {
+        _campaigns.removeWhere(
+          (item) => item.firestoreId == campaign.firestoreId,
+        );
+      });
 
-    if (!mounted) return;
+      // -----------------------------------------------------------
+      // SUCCESS MESSAGE
+      // -----------------------------------------------------------
 
-    setState(() {
-      for (final other in _campaigns) {
-        if (other.firestoreId != campaign.firestoreId) {
-          other.enabled = false;
-
-          if (other.status == 'Active') {
-            other.status = 'Approved';
-          }
-        }
-      }
-
-      campaign.enabled = true;
-      campaign.status = 'Active';
-    });
-
-    // -----------------------------------------------------------
-    // SUCCESS MESSAGE
-    // -----------------------------------------------------------
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Campaign is now active.',
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Campaign deleted.'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
           ),
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-        ),
-      );
-  } catch (e) {
-    if (!mounted) return;
+        );
+    } catch (e) {
+      if (!mounted) return;
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not activate campaign: $e',
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not delete campaign: $e'),
+            behavior: SnackBarBehavior.floating,
           ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+        );
+    }
   }
-} 
-
-//delete campaign
-
- Future<void> _deleteCampaign(
-  _DraftCampaign campaign,
-) async {
-  if (campaign.firestoreId.isEmpty) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Campaign is not linked to Firestore.',
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-    return;
-  }
-
-  try {
-    // -----------------------------------------------------------
-    // DELETE FROM FIRESTORE
-    // -----------------------------------------------------------
-
-    await FirebaseFirestore.instance
-        .collection('campaigns')
-        .doc(campaign.firestoreId)
-        .delete();
-
-    // -----------------------------------------------------------
-    // DELETE FROM LOCAL STATE
-    // -----------------------------------------------------------
-
-    if (!mounted) return;
-
-    setState(() {
-      _campaigns.removeWhere(
-        (item) =>
-            item.firestoreId == campaign.firestoreId,
-      );
-    });
-
-    // -----------------------------------------------------------
-    // SUCCESS MESSAGE
-    // -----------------------------------------------------------
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Campaign deleted.',
-          ),
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-        ),
-      );
-  } catch (e) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not delete campaign: $e',
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-  }
-}
 
   // =============================================================
   // COMING NEXT
@@ -5471,8 +7966,6 @@ Future<void> _toggleCampaign(
     );
   }
 }
-
-
 
 class _DraftCampaign {
   // Firestore document ID
@@ -5553,33 +8046,22 @@ class _CampaignApprovedDialogContentState
 
     _checkAnimation = CurvedAnimation(
       parent: _controller,
-      curve: const Interval(
-        0.25,
-        0.70,
-        curve: Curves.easeOut,
-      ),
+      curve: const Interval(0.25, 0.70, curve: Curves.easeOut),
     );
 
     _textAnimation = CurvedAnimation(
       parent: _controller,
-      curve: const Interval(
-        0.45,
-        1.0,
-        curve: Curves.easeOut,
-      ),
+      curve: const Interval(0.45, 1.0, curve: Curves.easeOut),
     );
 
     _controller.forward();
 
     // Automatically close the dialog after 2.5 seconds.
-    Future.delayed(
-      const Duration(milliseconds: 2500),
-      () {
-        if (mounted) {
-          Navigator.of(context).pop();
-        }
-      },
-    );
+    Future.delayed(const Duration(milliseconds: 2500), () {
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    });
   }
 
   @override
@@ -5594,10 +8076,7 @@ class _CampaignApprovedDialogContentState
       color: Colors.transparent,
       child: Container(
         width: 330,
-        padding: const EdgeInsets.symmetric(
-          horizontal: 28,
-          vertical: 32,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(28),
@@ -5624,17 +8103,13 @@ class _CampaignApprovedDialogContentState
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: const LinearGradient(
-                    colors: [
-                      Color(0xFF6657E8),
-                      Color(0xFF8B5CF6),
-                    ],
+                    colors: [Color(0xFF6657E8), Color(0xFF8B5CF6)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFF6657E8)
-                          .withOpacity(0.28),
+                      color: const Color(0xFF6657E8).withOpacity(0.28),
                       blurRadius: 22,
                       spreadRadius: 2,
                     ),
@@ -5644,9 +8119,7 @@ class _CampaignApprovedDialogContentState
                   animation: _checkAnimation,
                   builder: (context, child) {
                     return CustomPaint(
-                      painter: _CheckPainter(
-                        progress: _checkAnimation.value,
-                      ),
+                      painter: _CheckPainter(progress: _checkAnimation.value),
                     );
                   },
                 ),
@@ -5658,7 +8131,6 @@ class _CampaignApprovedDialogContentState
             // =====================================================
             // SUCCESS TEXT
             // =====================================================
-
             FadeTransition(
               opacity: _textAnimation,
               child: SlideTransition(
@@ -5697,7 +8169,6 @@ class _CampaignApprovedDialogContentState
                     // =================================================
                     // SAVED BADGE
                     // =================================================
-
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 13,
@@ -5745,15 +8216,10 @@ class _CampaignApprovedDialogContentState
 class _CheckPainter extends CustomPainter {
   final double progress;
 
-  _CheckPainter({
-    required this.progress,
-  });
+  _CheckPainter({required this.progress});
 
   @override
-  void paint(
-    Canvas canvas,
-    Size size,
-  ) {
+  void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = Colors.white
       ..strokeWidth = 5
@@ -5761,20 +8227,11 @@ class _CheckPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
 
-    final start = Offset(
-      size.width * 0.28,
-      size.height * 0.52,
-    );
+    final start = Offset(size.width * 0.28, size.height * 0.52);
 
-    final middle = Offset(
-      size.width * 0.44,
-      size.height * 0.67,
-    );
+    final middle = Offset(size.width * 0.44, size.height * 0.67);
 
-    final end = Offset(
-      size.width * 0.73,
-      size.height * 0.36,
-    );
+    final end = Offset(size.width * 0.73, size.height * 0.36);
 
     final path = Path();
 
@@ -5782,59 +8239,127 @@ class _CheckPainter extends CustomPainter {
       final firstProgress = progress / 0.5;
 
       final current = Offset(
-        start.dx +
-            (middle.dx - start.dx) * firstProgress,
-        start.dy +
-            (middle.dy - start.dy) * firstProgress,
+        start.dx + (middle.dx - start.dx) * firstProgress,
+        start.dy + (middle.dy - start.dy) * firstProgress,
       );
 
-      path.moveTo(
-        start.dx,
-        start.dy,
-      );
+      path.moveTo(start.dx, start.dy);
 
-      path.lineTo(
-        current.dx,
-        current.dy,
-      );
+      path.lineTo(current.dx, current.dy);
     } else {
-      path.moveTo(
-        start.dx,
-        start.dy,
-      );
+      path.moveTo(start.dx, start.dy);
 
-      path.lineTo(
-        middle.dx,
-        middle.dy,
-      );
+      path.lineTo(middle.dx, middle.dy);
 
-      final secondProgress =
-          (progress - 0.5) / 0.5;
+      final secondProgress = (progress - 0.5) / 0.5;
 
       final current = Offset(
-        middle.dx +
-            (end.dx - middle.dx) * secondProgress,
-        middle.dy +
-            (end.dy - middle.dy) * secondProgress,
+        middle.dx + (end.dx - middle.dx) * secondProgress,
+        middle.dy + (end.dy - middle.dy) * secondProgress,
       );
 
-      path.lineTo(
-        current.dx,
-        current.dy,
-      );
+      path.lineTo(current.dx, current.dy);
     }
 
-    canvas.drawPath(
-      path,
-      paint,
-    );
+    canvas.drawPath(path, paint);
   }
 
   @override
-  bool shouldRepaint(
-    covariant _CheckPainter oldDelegate,
-  ) {
+  bool shouldRepaint(covariant _CheckPainter oldDelegate) {
     return oldDelegate.progress != progress;
   }
 }
 
+class _ListingSavedDialog extends StatefulWidget {
+  const _ListingSavedDialog();
+
+  @override
+  State<_ListingSavedDialog> createState() => _ListingSavedDialogState();
+}
+
+class _ListingSavedDialogState extends State<_ListingSavedDialog>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+
+    _scale = CurvedAnimation(parent: _controller, curve: Curves.elasticOut);
+
+    _controller.forward();
+
+    Future.delayed(const Duration(milliseconds: 2200), () {
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ScaleTransition(
+              scale: _scale,
+              child: Container(
+                width: 72,
+                height: 72,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE9F8F4),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_rounded,
+                  color: Color(0xFF0F8A73),
+                  size: 42,
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            const Text(
+              'Listing saved',
+              style: TextStyle(
+                fontSize: 21,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF17201E),
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
+            const Text(
+              'Your listing has been added to Saved.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.4,
+                color: Color(0xFF687873),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -1437,7 +1437,9 @@ class _AnalyticsEngine {
         now.year,
         now.month,
         now.day,
-      ).subtract(Duration(days: periodDays - 1));
+      ).subtract(
+        Duration(days: periodDays - 1),
+      );
     }
 
     // ---------------------------------------------------------
@@ -1475,13 +1477,17 @@ class _AnalyticsEngine {
     // ---------------------------------------------------------
 
     final completed = periodOrders.where((order) {
-      final status = _normaliseStatus(order['paymentStatus']);
+      final status =
+          _normaliseStatus(order['paymentStatus']);
 
       return status == 'done' || status == 'completed';
     }).toList();
 
     final pending = periodOrders.where((order) {
-      return _normaliseStatus(order['paymentStatus']) == 'pending';
+      return _normaliseStatus(
+            order['paymentStatus'],
+          ) ==
+          'pending';
     }).toList();
 
     // ---------------------------------------------------------
@@ -1509,7 +1515,8 @@ class _AnalyticsEngine {
     final customerIds = <String>{};
 
     for (final order in periodOrders) {
-      final id = order['userId']?.toString().trim() ?? '';
+      final id =
+          order['userId']?.toString().trim() ?? '';
 
       if (id.isNotEmpty) {
         customerIds.add(id);
@@ -1525,7 +1532,11 @@ class _AnalyticsEngine {
 
     for (final order in periodOrders) {
       final method =
-          order['paymentMethod']?.toString().toLowerCase().trim() ?? '';
+          order['paymentMethod']
+                  ?.toString()
+                  .toLowerCase()
+                  .trim() ??
+              '';
 
       if (method == 'online') {
         onlinePayments++;
@@ -1539,50 +1550,11 @@ class _AnalyticsEngine {
     // ---------------------------------------------------------
 
     final productMaps = products
-        .map((doc) => Map<String, dynamic>.from(doc.data()))
+        .map(
+          (doc) =>
+              Map<String, dynamic>.from(doc.data()),
+        )
         .toList();
-
-    
-    // =============================================================
-    // ALL SELLER PRODUCTS
-    // Used by Campaign / Bundle / Offer workspaces.
-    // =============================================================
-
-    final allProducts = productMaps.map((product) {
-  final rawPrice = product['price'];
-
-  double parsedPrice = 0;
-
-  if (rawPrice is num) {
-    parsedPrice = rawPrice.toDouble();
-  } else if (rawPrice != null) {
-    parsedPrice = double.tryParse(
-          rawPrice.toString().replaceAll('₹', '').trim(),
-        ) ??
-        0;
-  }
-
-  return ProductPerformance(
-  // Firestore document ID
-  id: product['productId']?.toString() ?? '',
-
-  // Product name from Firestore
-  name: product['title']?.toString() ?? 'Untitled product',
-
-  // Catalogue products don't need analytics values here.
-  orders: 0,
-  revenue: 0,
-  share: 0,
-
-  price: parsedPrice,
-
-  imageUrl: product['imageUrl']?.toString() ?? '',
-
-  // Seller information
-  sellerId: product['sellerId']?.toString() ?? '',
-  sellerName: product['sellerName']?.toString() ?? '',
-);
-}).toList();
 
     final activeProducts = productMaps.where((product) {
       return product['isAvailable'] == true;
@@ -1590,38 +1562,69 @@ class _AnalyticsEngine {
 
     // ---------------------------------------------------------
     // PRODUCT SALES
+    //
+    // This contains REAL completed-order data.
+    //
+    // We keep this structure because the rest of your
+    // analytics already uses productStats.
     // ---------------------------------------------------------
 
     final productStats = <String, ProductPerformance>{};
 
     for (final order in completed) {
-      final name = order['productName']?.toString().trim() ?? 'Unknown Product';
+      final productName =
+          order['productName']?.toString().trim() ??
+              'Unknown Product';
 
-      final price = _price(order['productPrice']);
+      final price =
+          _price(order['productPrice']);
 
-      final existing = productStats[name];
+      final existing =
+          productStats[productName];
 
       if (existing == null) {
-        productStats[name] = ProductPerformance(
-          name: name,
+        productStats[productName] =
+            ProductPerformance(
+          id: order['productId']
+                  ?.toString()
+                  .trim() ??
+              '',
+          name: productName,
           orders: 1,
           revenue: price,
           share: 0,
         );
       } else {
-        productStats[name] = ProductPerformance(
-          name: name,
+        productStats[productName] =
+            ProductPerformance(
+          id: existing.id.isNotEmpty
+              ? existing.id
+              : order['productId']
+                      ?.toString()
+                      .trim() ??
+                  '',
+          name: existing.name,
           orders: existing.orders + 1,
           revenue: existing.revenue + price,
           share: 0,
+          price: existing.price,
+          imageUrl: existing.imageUrl,
+          sellerId: existing.sellerId,
+          sellerName: existing.sellerName,
         );
       }
     }
 
-    var topProducts = productStats.values.toList();
+    // ---------------------------------------------------------
+    // TOP PRODUCTS
+    // ---------------------------------------------------------
+
+    var topProducts =
+        productStats.values.toList();
 
     topProducts.sort((a, b) {
-      final orderCompare = b.orders.compareTo(a.orders);
+      final orderCompare =
+          b.orders.compareTo(a.orders);
 
       if (orderCompare != 0) {
         return orderCompare;
@@ -1630,29 +1633,200 @@ class _AnalyticsEngine {
       return b.revenue.compareTo(a.revenue);
     });
 
-    final productByTitle = <String, Map<String, dynamic>>{};
+    // ---------------------------------------------------------
+    // CATALOGUE PRODUCT LOOKUP
+    // ---------------------------------------------------------
+
+    final productByTitle =
+        <String, Map<String, dynamic>>{};
+
+    final productById =
+        <String, Map<String, dynamic>>{};
 
     for (final product in productMaps) {
-      final title = product['title']?.toString().trim() ?? '';
+      final title =
+          product['title']?.toString().trim() ??
+              '';
+
+      final productId =
+          product['productId']?.toString().trim() ??
+              '';
+
       if (title.isNotEmpty) {
-        productByTitle[title.toLowerCase()] = product;
+        productByTitle[title.toLowerCase()] =
+            product;
+      }
+
+      if (productId.isNotEmpty) {
+        productById[productId] =
+            product;
       }
     }
 
-    topProducts = topProducts.take(5).map((product) {
-      final double share = revenue <= 0 ? 0 : (product.revenue / revenue) * 100;
+    // ---------------------------------------------------------
+    // ENRICH TOP PRODUCTS
+    // ---------------------------------------------------------
 
-      final catalogProduct = productByTitle[product.name.toLowerCase()];
+    topProducts = topProducts
+        .take(5)
+        .map((product) {
+      final double share = revenue <= 0
+          ? 0
+          : (product.revenue / revenue) * 100;
+
+      Map<String, dynamic>? catalogProduct;
+
+      // First try product ID.
+      if (product.id.isNotEmpty) {
+        catalogProduct =
+            productById[product.id];
+      }
+
+      // Fall back to product name.
+      catalogProduct ??=
+          productByTitle[
+              product.name.toLowerCase()];
 
       return ProductPerformance(
+        id: product.id,
         name: product.name,
         orders: product.orders,
         revenue: product.revenue,
         share: share,
-        price: catalogProduct == null ? 0 : _price(catalogProduct['price']),
+        price: catalogProduct == null
+            ? 0
+            : _price(
+                catalogProduct['price'],
+              ),
         imageUrl: catalogProduct == null
             ? ''
-            : catalogProduct['imageUrl']?.toString() ?? '',
+            : catalogProduct['imageUrl']
+                    ?.toString() ??
+                '',
+        sellerId: catalogProduct == null
+            ? ''
+            : catalogProduct['sellerId']
+                    ?.toString() ??
+                '',
+        sellerName: catalogProduct == null
+            ? ''
+            : catalogProduct['sellerName']
+                    ?.toString() ??
+                '',
+      );
+    }).toList();
+
+    // =========================================================
+    // ALL SELLER PRODUCTS
+    //
+    // Every catalogue product is included.
+    //
+    // IMPORTANT:
+    // Unlike the previous version, these products now contain
+    // their ACTUAL completed-order analytics.
+    //
+    // This is what the Campaign AI selector uses.
+    // =========================================================
+
+    final allProducts =
+        productMaps.map((product) {
+      final productId =
+          product['productId']?.toString().trim() ??
+              '';
+
+      final productName =
+          product['title']?.toString().trim() ??
+              'Untitled product';
+
+      // -------------------------------------------------------
+      // Find actual sales statistics.
+      //
+      // First try product ID.
+      // Then fall back to product name.
+      // -------------------------------------------------------
+
+      ProductPerformance? stats;
+
+      if (productId.isNotEmpty) {
+        stats = productStats.values
+            .where(
+              (item) =>
+                  item.id.isNotEmpty &&
+                  item.id == productId,
+            )
+            .cast<ProductPerformance?>()
+            .firstWhere(
+              (item) => item != null,
+              orElse: () => null,
+            );
+      }
+
+      // Name fallback.
+      if (stats == null) {
+        final normalizedName =
+            productName.toLowerCase();
+
+        for (final item
+            in productStats.values) {
+          if (item.name
+                  .toLowerCase()
+                  .trim() ==
+              normalizedName) {
+            stats = item;
+            break;
+          }
+        }
+      }
+
+      // -------------------------------------------------------
+      // PRODUCT PRICE
+      // -------------------------------------------------------
+
+      final parsedPrice =
+          _price(product['price']);
+
+      // -------------------------------------------------------
+      // ACTUAL SALES VALUES
+      // -------------------------------------------------------
+
+      final productOrders =
+          stats?.orders ?? 0;
+
+      final productRevenue =
+          stats?.revenue ?? 0;
+
+      final productShare = revenue <= 0
+          ? 0.0
+          : (productRevenue / revenue) * 100;
+
+      return ProductPerformance(
+        // Firestore product ID
+        id: productId,
+
+        // Catalogue product name
+        name: productName,
+
+        // REAL analytics
+        orders: productOrders,
+        revenue: productRevenue,
+        share: productShare,
+
+        // Catalogue price
+        price: parsedPrice,
+
+        // Catalogue image
+        imageUrl:
+            product['imageUrl']?.toString() ??
+                '',
+
+        // Seller information
+        sellerId:
+            product['sellerId']?.toString() ??
+                '',
+
+        sellerName:
+            product['sellerName']?.toString() ??
+                '',
       );
     }).toList();
 
@@ -1661,45 +1835,82 @@ class _AnalyticsEngine {
     // ---------------------------------------------------------
 
     final soldProductNames = productStats.keys
-        .map((name) => name.toLowerCase())
+        .map(
+          (name) =>
+              name.toLowerCase().trim(),
+        )
         .toSet();
 
     int soldProducts = 0;
 
     for (final product in productMaps) {
-      final title = product['title']?.toString().toLowerCase().trim() ?? '';
+      final title =
+          product['title']
+                  ?.toString()
+                  .toLowerCase()
+                  .trim() ??
+              '';
 
-      if (title.isNotEmpty && soldProductNames.contains(title)) {
+      if (title.isNotEmpty &&
+          soldProductNames.contains(title)) {
         soldProducts++;
       }
     }
 
-    final unusedProducts = math.max(0, activeProducts - soldProducts);
+    final unusedProducts =
+        math.max(
+      0,
+      activeProducts - soldProducts,
+    );
 
     // ---------------------------------------------------------
     // QUIET PRODUCTS
     // ---------------------------------------------------------
 
-    final quietProducts = <ProductPerformance>[];
+    final quietProducts =
+        <ProductPerformance>[];
 
     for (final product in productMaps) {
-      final title = product['title']?.toString().trim() ?? '';
+      final title =
+          product['title']?.toString().trim() ??
+              '';
 
-      if (title.isEmpty || product['isAvailable'] != true) {
+      if (title.isEmpty ||
+          product['isAvailable'] != true) {
         continue;
       }
 
-      final hasSales = soldProductNames.contains(title.toLowerCase());
+      final hasSales =
+          soldProductNames.contains(
+        title.toLowerCase(),
+      );
 
       if (!hasSales) {
         quietProducts.add(
           ProductPerformance(
+            id: product['productId']
+                    ?.toString()
+                    .trim() ??
+                '',
             name: title,
             orders: 0,
             revenue: 0,
             share: 0,
-            price: _price(product['price']),
-            imageUrl: product['imageUrl']?.toString() ?? '',
+            price: _price(
+              product['price'],
+            ),
+            imageUrl:
+                product['imageUrl']
+                        ?.toString() ??
+                    '',
+            sellerId:
+                product['sellerId']
+                        ?.toString() ??
+                    '',
+            sellerName:
+                product['sellerName']
+                        ?.toString() ??
+                    '',
           ),
         );
       }
@@ -1709,10 +1920,14 @@ class _AnalyticsEngine {
     // DAILY REVENUE
     // ---------------------------------------------------------
 
-    final dailyMap = <String, double>{};
+    final dailyMap =
+        <String, double>{};
 
     for (final order in completed) {
-      final date = _timestampToDate(order['timestamp']);
+      final date =
+          _timestampToDate(
+        order['timestamp'],
+      );
 
       if (date == null) {
         continue;
@@ -1723,11 +1938,17 @@ class _AnalyticsEngine {
           '${date.month.toString().padLeft(2, '0')}-'
           '${date.day.toString().padLeft(2, '0')}';
 
-      dailyMap[key] = (dailyMap[key] ?? 0) + _price(order['productPrice']);
+      dailyMap[key] =
+          (dailyMap[key] ?? 0) +
+              _price(
+                order['productPrice'],
+              );
     }
 
-    var dailyRevenue = dailyMap.entries.map((entry) {
-      final parts = entry.key.split('-');
+    var dailyRevenue =
+        dailyMap.entries.map((entry) {
+      final parts =
+          entry.key.split('-');
 
       final date = DateTime(
         int.parse(parts[0]),
@@ -1736,7 +1957,8 @@ class _AnalyticsEngine {
       );
 
       return DailyRevenue(
-        label: '${date.day}/${date.month}',
+        label:
+            '${date.day}/${date.month}',
         revenue: entry.value,
         maxRevenue: 0,
       );
@@ -1746,11 +1968,17 @@ class _AnalyticsEngine {
       return b.label.compareTo(a.label);
     });
 
-    final double maxDailyRevenue = dailyRevenue.isEmpty
-        ? 0
-        : dailyRevenue.map((item) => item.revenue).reduce(math.max);
+    final double maxDailyRevenue =
+        dailyRevenue.isEmpty
+            ? 0
+            : dailyRevenue
+                .map(
+                  (item) => item.revenue,
+                )
+                .reduce(math.max);
 
-    dailyRevenue = dailyRevenue.map((item) {
+    dailyRevenue =
+        dailyRevenue.map((item) {
       return DailyRevenue(
         label: item.label,
         revenue: item.revenue,
@@ -1758,21 +1986,36 @@ class _AnalyticsEngine {
       );
     }).toList();
 
+    // ---------------------------------------------------------
+    // FINAL ANALYTICS OBJECT
+    // ---------------------------------------------------------
+
     return SellerAnalytics(
       orderCount: allOrders.length,
       productCount: productMaps.length,
+
       activeProducts: activeProducts,
       soldProducts: soldProducts,
       unusedProducts: unusedProducts,
+
       periodOrders: periodOrders.length,
       completedOrders: completed.length,
       pendingOrders: pending.length,
+
       periodRevenue: revenue,
-      averageOrderValue: averageOrderValue.toDouble(),
-      completionRate: completionRate.toDouble(),
-      uniqueCustomers: customerIds.length,
-      onlinePayments: onlinePayments,
-      codPayments: codPayments,
+      averageOrderValue:
+          averageOrderValue.toDouble(),
+      completionRate:
+          completionRate.toDouble(),
+
+      uniqueCustomers:
+          customerIds.length,
+
+      onlinePayments:
+          onlinePayments,
+      codPayments:
+          codPayments,
+
       topProducts: topProducts,
       quietProducts: quietProducts,
       allProducts: allProducts,
@@ -1793,14 +2036,35 @@ class _AnalyticsEngine {
       return value.toDouble();
     }
 
-    return double.tryParse(value.toString()) ?? 0;
+    return double.tryParse(
+          value
+              .toString()
+              .replaceAll('₹', '')
+              .replaceAll(',', '')
+              .trim(),
+        ) ??
+        0;
   }
+
+  // =========================================================
+  // STATUS HELPER
+  // =========================================================
 
   static String _normaliseStatus(dynamic value) {
-    return value?.toString().toLowerCase().trim() ?? '';
+    return value
+            ?.toString()
+            .toLowerCase()
+            .trim() ??
+        '';
   }
 
-  static DateTime? _timestampToDate(dynamic value) {
+  // =========================================================
+  // TIMESTAMP HELPER
+  // =========================================================
+
+  static DateTime? _timestampToDate(
+    dynamic value,
+  ) {
     if (value is Timestamp) {
       return value.toDate();
     }
@@ -1868,27 +2132,34 @@ class SellerAnalytics {
     required this.uniqueCustomers,
     required this.onlinePayments,
     required this.codPayments,
-
     List<ProductPerformance>? topProducts,
     List<ProductPerformance>? quietProducts,
     List<ProductPerformance>? allProducts,
     List<DailyRevenue>? dailyRevenue,
   })  : topProducts =
             List<ProductPerformance>.unmodifiable(
-          topProducts ?? const <ProductPerformance>[],
+          topProducts ??
+              const <ProductPerformance>[],
         ),
         quietProducts =
             List<ProductPerformance>.unmodifiable(
-          quietProducts ?? const <ProductPerformance>[],
+          quietProducts ??
+              const <ProductPerformance>[],
         ),
         allProducts =
             List<ProductPerformance>.unmodifiable(
-          allProducts ?? const <ProductPerformance>[],
+          allProducts ??
+              const <ProductPerformance>[],
         ),
         dailyRevenue =
             List<DailyRevenue>.unmodifiable(
-          dailyRevenue ?? const <DailyRevenue>[],
+          dailyRevenue ??
+              const <DailyRevenue>[],
         );
+
+  // =============================================================
+  // GEMINI PAYLOAD
+  // =============================================================
 
   Map<String, dynamic> toGeminiPayload() {
     return {
@@ -1900,9 +2171,12 @@ class SellerAnalytics {
         'completedOrders': completedOrders,
         'pendingOrders': pendingOrders,
         'revenue': periodRevenue,
-        'averageOrderValue': averageOrderValue,
-        'completionRate': completionRate,
-        'uniqueCustomers': uniqueCustomers,
+        'averageOrderValue':
+            averageOrderValue,
+        'completionRate':
+            completionRate,
+        'uniqueCustomers':
+            uniqueCustomers,
       },
 
       'payments': {
@@ -1922,7 +2196,8 @@ class SellerAnalytics {
         };
       }).toList(),
 
-      'quietProducts': quietProducts.map((product) {
+      'quietProducts':
+          quietProducts.map((product) {
         return {
           'id': product.id,
           'name': product.name,
@@ -1930,7 +2205,8 @@ class SellerAnalytics {
         };
       }).toList(),
 
-      'revenueActivity': dailyRevenue.map((day) {
+      'revenueActivity':
+          dailyRevenue.map((day) {
         return {
           'date': day.label,
           'revenue': day.revenue,

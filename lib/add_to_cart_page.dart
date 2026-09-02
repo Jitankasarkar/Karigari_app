@@ -11,19 +11,23 @@ class AddToCartPage extends StatelessWidget {
   // COLORS
   // =========================================================
 
-  static const Color primaryOrange =
-      Color.fromARGB(255, 214, 112, 22);
+  static const Color primaryOrange = Color.fromARGB(255, 214, 112, 22);
 
-  static const Color darkOrange =
-      Color.fromARGB(255, 141, 83, 20);
+  static const Color darkOrange = Color.fromARGB(255, 141, 83, 20);
 
   // =========================================================
   // CART REFERENCE
+  //
+  // Firestore structure:
+  //
+  // users
+  //   └── userId
+  //        └── cart
+  //             └── productId
+  //
   // =========================================================
 
-  CollectionReference<Map<String, dynamic>> _cartReference(
-    String uid,
-  ) {
+  CollectionReference<Map<String, dynamic>> _cartReference(String uid) {
     return FirebaseFirestore.instance
         .collection('users')
         .doc(uid)
@@ -35,25 +39,25 @@ class AddToCartPage extends StatelessWidget {
   // =========================================================
 
   int _toInt(dynamic value, {int fallback = 0}) {
-    if (value is int) {
-      return value;
-    }
-
-    if (value is double) {
-      return value.toInt();
-    }
-
-    return int.tryParse(value?.toString() ?? '') ?? fallback;
+  if (value is int) {
+    return value;
   }
+
+  if (value is num) {
+    return value.round();
+  }
+
+  return double.tryParse(
+        value?.toString().replaceAll(',', '').trim() ?? '',
+      )?.round() ??
+      fallback;
+}
 
   // =========================================================
   // UPDATE QUANTITY
   // =========================================================
 
-  Future<void> _updateQuantity(
-    String cartId,
-    int quantity,
-  ) async {
+  Future<void> _updateQuantity(String cartId, int quantity) async {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) return;
@@ -77,17 +81,13 @@ class AddToCartPage extends StatelessWidget {
   // REMOVE ITEM
   // =========================================================
 
-  Future<void> _removeItem(
-    String cartId,
-  ) async {
+  Future<void> _removeItem(String cartId) async {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) return;
 
     try {
-      await _cartReference(user.uid)
-          .doc(cartId)
-          .delete();
+      await _cartReference(user.uid).doc(cartId).delete();
     } catch (e) {
       debugPrint('Cart item removal failed: $e');
     }
@@ -107,22 +107,53 @@ class AddToCartPage extends StatelessWidget {
       final data = doc.data();
 
       return {
+        // -----------------------------------------------------
+        // CART
+        // -----------------------------------------------------
+
         'cartId': doc.id,
 
-        'productId':
-            (data['productId'] ?? doc.id).toString(),
+        // -----------------------------------------------------
+        // PRODUCT
+        // -----------------------------------------------------
 
-        'title':
-            (data['title'] ?? '').toString(),
+        'productId': (data['productId'] ?? doc.id).toString(),
 
-        'description':
-            (data['description'] ?? '').toString(),
+        'title': (data['title'] ?? '').toString(),
 
-        'price':
-            (data['price'] ?? '0').toString(),
+        'description': (data['description'] ?? '').toString(),
 
-        'imageUrl':
-            (data['imageUrl'] ?? '').toString(),
+        // This is the CURRENT price stored in the cart.
+        //
+        // For a normal product:
+        //     price = original price
+        //
+        // For a campaign product:
+        //     price = discounted price
+        //
+        'price': (data['price'] ?? '0').toString(),
+
+        // Original product price.
+        //
+        // For a normal product this will be the same
+        // as "price".
+        //
+        'originalPrice':
+            (data['originalPrice'] ?? data['price'] ?? '0').toString(),
+
+        'imageUrl': (data['imageUrl'] ?? '').toString(),
+
+        // -----------------------------------------------------
+        // CAMPAIGN
+        // -----------------------------------------------------
+
+        'campaignId': (data['campaignId'] ?? '').toString(),
+
+        'campaignOffer': (data['campaignOffer'] ?? '').toString(),
+
+        // -----------------------------------------------------
+        // SELLER
+        // -----------------------------------------------------
 
         'sellerName':
             (data['sellerName'] ?? 'Local Artisan').toString(),
@@ -130,8 +161,14 @@ class AddToCartPage extends StatelessWidget {
         'sellerId':
             (data['sellerId'] ?? '').toString(),
 
-        'quantity':
-            _toInt(data['quantity'], fallback: 1),
+        // -----------------------------------------------------
+        // QUANTITY
+        // -----------------------------------------------------
+
+        'quantity': _toInt(
+          data['quantity'],
+          fallback: 1,
+        ),
       };
     }).toList();
 
@@ -184,12 +221,12 @@ class AddToCartPage extends StatelessWidget {
     // CART STREAM
     // =======================================================
 
-    final cartStream = _cartReference(user.uid)
-        .orderBy(
-          'addedAt',
-          descending: true,
-        )
-        .snapshots();
+    final cartStream = _cartReference(
+      user.uid,
+    ).orderBy(
+      'addedAt',
+      descending: true,
+    ).snapshots();
 
     return Scaffold(
       // =====================================================
@@ -224,7 +261,8 @@ class AddToCartPage extends StatelessWidget {
           // -------------------------------------------------
 
           if (snapshot.connectionState ==
-              ConnectionState.waiting) {
+                  ConnectionState.waiting &&
+              !snapshot.hasData) {
             return const Center(
               child: CircularProgressIndicator(),
             );
@@ -273,7 +311,12 @@ class AddToCartPage extends StatelessWidget {
             );
           }
 
-          final items = snapshot.data?.docs ?? [];
+          // -------------------------------------------------
+          // CART ITEMS
+          // -------------------------------------------------
+
+          final items =
+              snapshot.data?.docs ?? [];
 
           // -------------------------------------------------
           // EMPTY CART
@@ -316,6 +359,18 @@ class AddToCartPage extends StatelessWidget {
 
           // -------------------------------------------------
           // CALCULATE SUBTOTAL
+          //
+          // IMPORTANT:
+          // "price" is always the effective price.
+          //
+          // Therefore:
+          //
+          // Normal product:
+          // 399 × 1 = 399
+          //
+          // Discounted product:
+          // 479 × 1 = 479
+          //
           // -------------------------------------------------
 
           int subtotal = 0;
@@ -335,6 +390,10 @@ class AddToCartPage extends StatelessWidget {
             subtotal += price * quantity;
           }
 
+          // -------------------------------------------------
+          // EXTRA CHARGES
+          // -------------------------------------------------
+
           const int deliveryCharge = 20;
           const int platformFee = 1;
 
@@ -343,9 +402,9 @@ class AddToCartPage extends StatelessWidget {
               deliveryCharge +
               platformFee;
 
-          // -------------------------------------------------
+          // =================================================
           // CART CONTENT
-          // -------------------------------------------------
+          // =================================================
 
           return Column(
             children: [
@@ -355,56 +414,116 @@ class AddToCartPage extends StatelessWidget {
 
               Expanded(
                 child: ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(
+                  padding:
+                      const EdgeInsets.fromLTRB(
                     12,
                     12,
                     12,
                     20,
                   ),
                   itemCount: items.length,
-                  itemBuilder: (context, index) {
-                    final doc = items[index];
-                    final data = doc.data();
+                  itemBuilder:
+                      (context, index) {
+                    final doc =
+                        items[index];
+
+                    final data =
+                        doc.data();
+
+                    // -----------------------------------------
+                    // PRODUCT DATA
+                    // -----------------------------------------
 
                     final title =
-                        (data['title'] ?? '').toString();
+                        (data['title'] ?? '')
+                            .toString();
 
                     final imageUrl =
-                        (data['imageUrl'] ?? '').toString();
+                        (data['imageUrl'] ?? '')
+                            .toString();
 
                     final sellerName =
                         (data['sellerName'] ??
                                 'Local Artisan')
                             .toString();
 
-                    final price = _toInt(
+                    // -----------------------------------------
+                    // PRICE
+                    // -----------------------------------------
+
+                    final price =
+                        _toInt(
                       data['price'],
                     );
 
-                    final quantity = _toInt(
+                    final originalPrice =
+                        _toInt(
+                      data['originalPrice'] ??
+                          data['price'],
+                    );
+
+                    // -----------------------------------------
+                    // CAMPAIGN
+                    // -----------------------------------------
+
+                    final campaignOffer =
+                        (data['campaignOffer'] ??
+                                '')
+                            .toString()
+                            .trim();
+
+                    final hasCampaign =
+                        campaignOffer.isNotEmpty &&
+                        originalPrice > price;
+
+                    // -----------------------------------------
+                    // QUANTITY
+                    // -----------------------------------------
+
+                    final quantity =
+                        _toInt(
                       data['quantity'],
                       fallback: 1,
                     );
 
+                    // =================================================
+                    // ITEM CARD
+                    // =================================================
+
                     return Card(
-                      margin: const EdgeInsets.only(
+                      margin:
+                          const EdgeInsets.only(
                         bottom: 12,
                       ),
+
                       elevation: 2,
+
                       shadowColor:
-                          Colors.black.withOpacity(0.08),
-                      shape: RoundedRectangleBorder(
+                          Colors.black
+                              .withOpacity(0.08),
+
+                      shape:
+                          RoundedRectangleBorder(
                         borderRadius:
-                            BorderRadius.circular(16),
+                            BorderRadius.circular(
+                          16,
+                        ),
                       ),
+
                       clipBehavior:
                           Clip.antiAlias,
+
                       child: Padding(
                         padding:
-                            const EdgeInsets.all(10),
+                            const EdgeInsets.all(
+                          10,
+                        ),
+
                         child: Row(
                           crossAxisAlignment:
-                              CrossAxisAlignment.start,
+                              CrossAxisAlignment
+                                  .start,
+
                           children: [
                             // =================================
                             // PRODUCT IMAGE
@@ -412,45 +531,60 @@ class AddToCartPage extends StatelessWidget {
 
                             ClipRRect(
                               borderRadius:
-                                  BorderRadius.circular(12),
+                                  BorderRadius.circular(
+                                12,
+                              ),
+
                               child: SizedBox(
                                 width: 100,
                                 height: 100,
-                                child: imageUrl.isNotEmpty
-                                    ? Image.network(
-                                        imageUrl,
-                                        fit: BoxFit.cover,
-                                        errorBuilder:
-                                            (
-                                          context,
-                                          error,
-                                          stackTrace,
-                                        ) {
-                                          return _imagePlaceholder();
-                                        },
-                                      )
-                                    : _imagePlaceholder(),
+
+                                child:
+                                    imageUrl.isNotEmpty
+                                        ? Image.network(
+                                            imageUrl,
+                                            fit: BoxFit.cover,
+                                            errorBuilder:
+                                                (
+                                              context,
+                                              error,
+                                              stackTrace,
+                                            ) {
+                                              return _imagePlaceholder();
+                                            },
+                                          )
+                                        : _imagePlaceholder(),
                               ),
                             ),
 
-                            const SizedBox(width: 12),
+                            const SizedBox(
+                              width: 12,
+                            ),
 
                             // =================================
                             // PRODUCT INFORMATION
                             // =================================
 
                             Expanded(
-                              child: Column(
+                              child:
+                                  Column(
                                 crossAxisAlignment:
                                     CrossAxisAlignment.start,
+
                                 children: [
+                                  // --------------------------------
                                   // TITLE
+                                  // --------------------------------
 
                                   Text(
                                     title,
+
                                     maxLines: 2,
+
                                     overflow:
-                                        TextOverflow.ellipsis,
+                                        TextOverflow
+                                            .ellipsis,
+
                                     style:
                                         const TextStyle(
                                       fontSize: 16,
@@ -459,38 +593,167 @@ class AddToCartPage extends StatelessWidget {
                                     ),
                                   ),
 
-                                  const SizedBox(height: 5),
+                                  const SizedBox(
+                                    height: 5,
+                                  ),
 
+                                  // --------------------------------
                                   // SELLER
+                                  // --------------------------------
 
                                   Text(
                                     'Sold by: $sellerName',
+
                                     maxLines: 1,
+
                                     overflow:
-                                        TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color:
-                                          Colors.grey.shade600,
-                                    ),
-                                  ),
+                                        TextOverflow
+                                            .ellipsis,
 
-                                  const SizedBox(height: 7),
-
-                                  // PRICE
-
-                                  Text(
-                                    '₹$price',
                                     style:
-                                        const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight:
-                                          FontWeight.bold,
-                                      color: darkOrange,
+                                        TextStyle(
+                                      fontSize: 12,
+                                      color: Colors
+                                          .grey
+                                          .shade600,
                                     ),
                                   ),
 
-                                  const SizedBox(height: 9),
+                                  const SizedBox(
+                                    height: 7,
+                                  ),
+
+                                  // =================================
+                                  // CAMPAIGN OFFER
+                                  // =================================
+
+                                  if (hasCampaign)
+                                    Container(
+                                      padding:
+                                          const EdgeInsets
+                                              .symmetric(
+                                        horizontal: 7,
+                                        vertical: 4,
+                                      ),
+
+                                      decoration:
+                                          BoxDecoration(
+                                        color:
+                                            const Color(
+                                          0xFFFFE8D5,
+                                        ),
+
+                                        borderRadius:
+                                            BorderRadius
+                                                .circular(
+                                          6,
+                                        ),
+                                      ),
+
+                                      child: Row(
+                                        mainAxisSize:
+                                            MainAxisSize.min,
+
+                                        children: [
+                                          const Icon(
+                                            Icons
+                                                .local_offer_rounded,
+                                            size: 13,
+                                            color:
+                                                primaryOrange,
+                                          ),
+
+                                          const SizedBox(
+                                            width: 4,
+                                          ),
+
+                                          Text(
+                                            campaignOffer,
+
+                                            style:
+                                                const TextStyle(
+                                              fontSize: 11,
+                                              fontWeight:
+                                                  FontWeight.w800,
+                                              color:
+                                                  primaryOrange,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+
+                                  if (hasCampaign)
+                                    const SizedBox(
+                                      height: 6,
+                                    ),
+
+                                  // =================================
+                                  // PRICE
+                                  // =================================
+
+                                  if (hasCampaign)
+                                    Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment
+                                              .center,
+
+                                      children: [
+                                        // ORIGINAL PRICE
+                                        Text(
+                                          '₹$originalPrice',
+
+                                          style:
+                                              TextStyle(
+                                            fontSize: 13,
+                                            color: Colors
+                                                .grey
+                                                .shade500,
+                                            decoration:
+                                                TextDecoration
+                                                    .lineThrough,
+                                            decorationThickness:
+                                                2,
+                                          ),
+                                        ),
+
+                                        const SizedBox(
+                                          width: 8,
+                                        ),
+
+                                        // DISCOUNTED PRICE
+                                        Text(
+                                          '₹$price',
+
+                                          style:
+                                              const TextStyle(
+                                            fontSize: 17,
+                                            fontWeight:
+                                                FontWeight.bold,
+                                            color:
+                                                darkOrange,
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  else
+                                    // NORMAL PRICE
+                                    Text(
+                                      '₹$price',
+
+                                      style:
+                                          const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight:
+                                            FontWeight.bold,
+                                        color:
+                                            darkOrange,
+                                      ),
+                                    ),
+
+                                  const SizedBox(
+                                    height: 9,
+                                  ),
 
                                   // =================================
                                   // QUANTITY CONTROL
@@ -500,24 +763,32 @@ class AddToCartPage extends StatelessWidget {
                                     children: [
                                       Container(
                                         height: 38,
+
                                         decoration:
                                             BoxDecoration(
-                                          border: Border.all(
+                                          border:
+                                              Border.all(
                                             color: Colors
                                                 .grey
                                                 .shade300,
                                           ),
+
                                           borderRadius:
                                               BorderRadius
                                                   .circular(
                                             10,
                                           ),
                                         ),
+
                                         child: Row(
                                           mainAxisSize:
-                                              MainAxisSize.min,
+                                              MainAxisSize
+                                                  .min,
+
                                           children: [
+                                            // -------------------------
                                             // MINUS
+                                            // -------------------------
 
                                             InkWell(
                                               borderRadius:
@@ -528,46 +799,62 @@ class AddToCartPage extends StatelessWidget {
                                                   10,
                                                 ),
                                               ),
+
                                               onTap: () {
                                                 _updateQuantity(
                                                   doc.id,
-                                                  quantity - 1,
+                                                  quantity -
+                                                      1,
                                                 );
                                               },
+
                                               child:
                                                   const SizedBox(
                                                 width: 38,
                                                 height: 38,
-                                                child: Icon(
-                                                  Icons.remove,
-                                                  size: 18,
+
+                                                child:
+                                                    Icon(
+                                                  Icons
+                                                      .remove,
+                                                  size:
+                                                      18,
                                                   color:
                                                       darkOrange,
                                                 ),
                                               ),
                                             ),
 
+                                            // -------------------------
                                             // QUANTITY
+                                            // -------------------------
 
                                             Container(
                                               constraints:
                                                   const BoxConstraints(
-                                                minWidth: 35,
+                                                minWidth:
+                                                    35,
                                               ),
+
                                               alignment:
-                                                  Alignment.center,
-                                              child: Text(
+                                                  Alignment
+                                                      .center,
+
+                                              child:
+                                                  Text(
                                                 '$quantity',
+
                                                 style:
                                                     const TextStyle(
                                                   fontWeight:
-                                                      FontWeight
-                                                          .w700,
+                                                      FontWeight.w700,
                                                 ),
                                               ),
                                             ),
 
+                                            // -------------------------
                                             // PLUS
+                                            // -------------------------
 
                                             InkWell(
                                               borderRadius:
@@ -578,19 +865,26 @@ class AddToCartPage extends StatelessWidget {
                                                   10,
                                                 ),
                                               ),
+
                                               onTap: () {
                                                 _updateQuantity(
                                                   doc.id,
-                                                  quantity + 1,
+                                                  quantity +
+                                                      1,
                                                 );
                                               },
+
                                               child:
                                                   const SizedBox(
                                                 width: 38,
                                                 height: 38,
-                                                child: Icon(
-                                                  Icons.add,
-                                                  size: 18,
+
+                                                child:
+                                                    Icon(
+                                                  Icons
+                                                      .add,
+                                                  size:
+                                                      18,
                                                   color:
                                                       darkOrange,
                                                 ),
@@ -602,22 +896,29 @@ class AddToCartPage extends StatelessWidget {
 
                                       const Spacer(),
 
+                                      // -------------------------
                                       // DELETE
+                                      // -------------------------
 
                                       IconButton(
                                         tooltip:
                                             'Remove',
+
                                         onPressed: () {
                                           _removeItem(
                                             doc.id,
                                           );
                                         },
-                                        icon: const Icon(
+
+                                        icon:
+                                            const Icon(
                                           Icons
                                               .delete_outline,
                                         ),
+
                                         color:
-                                            Colors.red.shade400,
+                                            Colors.red
+                                                .shade400,
                                       ),
                                     ],
                                   ),
@@ -644,40 +945,66 @@ class AddToCartPage extends StatelessWidget {
                   16,
                   16,
                 ),
-                decoration: BoxDecoration(
+
+                decoration:
+                    BoxDecoration(
                   color: Colors.white,
+
                   boxShadow: [
                     BoxShadow(
-                      color:
-                          Colors.black.withOpacity(0.08),
+                      color: Colors.black
+                          .withOpacity(0.08),
                       blurRadius: 18,
                       offset:
-                          const Offset(0, -5),
+                          const Offset(
+                        0,
+                        -5,
+                      ),
                     ),
                   ],
                 ),
+
                 child: SafeArea(
                   top: false,
+
                   child: Column(
                     children: [
+                      // -----------------------------------------
+                      // SUBTOTAL
+                      // -----------------------------------------
+
                       _summaryRow(
                         'Subtotal',
                         subtotal,
                       ),
+
+                      // -----------------------------------------
+                      // DELIVERY
+                      // -----------------------------------------
 
                       _summaryRow(
                         'Delivery',
                         deliveryCharge,
                       ),
 
+                      // -----------------------------------------
+                      // PLATFORM FEE
+                      // -----------------------------------------
+
                       _summaryRow(
                         'Platform Fee',
                         platformFee,
                       ),
 
-                      const SizedBox(height: 5),
+                      const SizedBox(
+                        height: 5,
+                      ),
 
                       const Divider(),
+
+                      // -----------------------------------------
+                      // TOTAL
+                      // -----------------------------------------
 
                       _summaryRow(
                         'Total',
@@ -685,38 +1012,58 @@ class AddToCartPage extends StatelessWidget {
                         bold: true,
                       ),
 
-                      const SizedBox(height: 12),
+                      const SizedBox(
+                        height: 12,
+                      ),
+
+                      // -----------------------------------------
+                      // CHECKOUT BUTTON
+                      // -----------------------------------------
 
                       SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
+                        width:
+                            double.infinity,
+
+                        child:
+                            ElevatedButton(
                           onPressed: () {
                             _checkoutCart(
                               context,
                               items,
                             );
                           },
+
                           style:
-                              ElevatedButton.styleFrom(
+                              ElevatedButton
+                                  .styleFrom(
                             backgroundColor:
                                 darkOrange,
+
                             foregroundColor:
                                 Colors.white,
+
                             elevation: 0,
+
                             padding:
                                 const EdgeInsets
                                     .symmetric(
                               vertical: 15,
                             ),
+
                             shape:
                                 RoundedRectangleBorder(
                               borderRadius:
                                   BorderRadius
-                                      .circular(12),
+                                      .circular(
+                                12,
+                              ),
                             ),
                           ),
-                          child: Text(
+
+                          child:
+                              Text(
                             'Checkout • ₹$total',
+
                             style:
                                 const TextStyle(
                               fontWeight:
@@ -744,6 +1091,7 @@ class AddToCartPage extends StatelessWidget {
   Widget _imagePlaceholder() {
     return Container(
       color: Colors.grey.shade100,
+
       child: Icon(
         Icons.image_outlined,
         size: 34,
@@ -766,12 +1114,15 @@ class AddToCartPage extends StatelessWidget {
           const EdgeInsets.symmetric(
         vertical: 3,
       ),
+
       child: Row(
         mainAxisAlignment:
             MainAxisAlignment.spaceBetween,
+
         children: [
           Text(
             label,
+
             style: TextStyle(
               fontSize: 15,
               fontWeight: bold
@@ -779,8 +1130,10 @@ class AddToCartPage extends StatelessWidget {
                   : FontWeight.normal,
             ),
           ),
+
           Text(
             '₹$amount',
+
             style: TextStyle(
               fontSize: 15,
               fontWeight: bold
