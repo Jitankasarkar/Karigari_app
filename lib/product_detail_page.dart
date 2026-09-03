@@ -262,153 +262,444 @@ class ProductDetailPage extends StatelessWidget {
   // ADD PRODUCT TO CART
   // =========================================================
 
-  Future<void> _addToCart(
-    BuildContext context,
-    String productId, {
-    double? campaignPrice,
-    Map<String, dynamic>? campaign,
-  }) async {
-    final user =
-        FirebaseAuth.instance.currentUser;
+ Future<void> _addToCart(
+  BuildContext context,
+  String productId, {
+  double? campaignPrice,
+  Map<String, dynamic>? campaign,
+}) async {
+  final user =
+      FirebaseAuth.instance.currentUser;
 
-    if (user == null) {
-      if (!context.mounted) return;
+  if (user == null) {
+    if (!context.mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            "Please log in to add products to your cart.",
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFFFFFCF8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
           ),
-        ),
-      );
-
-      return;
-    }
-
-    if (productId.isEmpty) {
-      if (!context.mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            "Unable to identify this product.",
+          contentPadding: const EdgeInsets.fromLTRB(
+            20,
+            20,
+            20,
+            16,
           ),
-        ),
-      );
-
-      return;
-    }
-
-    // ---------------------------------------------------------
-    // ORIGINAL PRICE
-    // ---------------------------------------------------------
-
-    final double originalPrice =
-        _toDouble(product["price"]);
-
-    // ---------------------------------------------------------
-    // EFFECTIVE PRICE
-    // ---------------------------------------------------------
-
-    final double effectivePrice =
-        campaignPrice ?? originalPrice;
-
-    // ---------------------------------------------------------
-    // CART DOCUMENT
-    // ---------------------------------------------------------
-
-    final cartRef = _cartReference(
-      user.uid,
-      productId,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFFE7D3),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.lock_outline_rounded,
+                  color: Color(0xFFD66A16),
+                  size: 21,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                "Login required",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF292929),
+                ),
+              ),
+              const SizedBox(height: 5),
+              const Text(
+                "Please log in to add products to your cart.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.4,
+                  color: Color(0xFF777777),
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 40,
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFD66A16),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    "Okay",
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
 
-    try {
-      await cartRef.set(
-        {
-          // ---------------------------------------------------
-          // PRODUCT INFORMATION
-          // ---------------------------------------------------
-
-          'productId': productId,
-
-          'title': product["title"] ?? "",
-
-          'description':
-              product["description"] ?? "",
-
-          'imageUrl':
-              product["imageUrl"] ??
-              product["image"] ??
-              "",
-
-          // ---------------------------------------------------
-          // PRICE INFORMATION
-          // ---------------------------------------------------
-
-          // Actual price customer pays.
-          'price': _formatPrice(effectivePrice),
-
-          // Original price before campaign.
-          'originalPrice':
-              _formatPrice(originalPrice),
-
-          // ---------------------------------------------------
-          // CAMPAIGN INFORMATION
-          // ---------------------------------------------------
-
-          'campaignId': campaign != null
-              ? (campaign['campaignId'] ?? '')
-                  .toString()
-              : '',
-
-          'campaignOffer': campaign != null
-              ? (campaign['offer'] ?? '')
-                  .toString()
-              : '',
-
-          // ---------------------------------------------------
-          // SELLER INFORMATION
-          // ---------------------------------------------------
-
-          'sellerName':
-              product["sellerName"] ??
-              "Local Artisan",
-
-          'sellerId':
-              product["sellerId"] ?? "",
-
-          // ---------------------------------------------------
-          // CART INFORMATION
-          // ---------------------------------------------------
-
-          'quantity': 1,
-
-          'addedAt':
-              FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-
-      if (!context.mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Added to cart"),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            "Could not add to cart: $e",
-          ),
-        ),
-      );
-    }
+    return;
   }
+
+  if (productId.isEmpty) {
+    if (!context.mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFFFFFCF8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          contentPadding: const EdgeInsets.fromLTRB(
+            20,
+            20,
+            20,
+            16,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFFE7D3),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.error_outline_rounded,
+                  color: Color(0xFFD66A16),
+                  size: 21,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                "Something went wrong",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF292929),
+                ),
+              ),
+              const SizedBox(height: 5),
+              const Text(
+                "Unable to identify this product.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.4,
+                  color: Color(0xFF777777),
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 40,
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFD66A16),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    "Okay",
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    return;
+  }
+
+  // =========================================================
+  // ORIGINAL PRICE
+  // =========================================================
+
+  final double originalPrice =
+      _toDouble(product["price"]);
+
+  // =========================================================
+  // EFFECTIVE PRICE
+  // =========================================================
+
+  final double effectivePrice =
+      campaignPrice ?? originalPrice;
+
+  // =========================================================
+  // CART DOCUMENT
+  // =========================================================
+
+  final cartRef = _cartReference(
+    user.uid,
+    productId,
+  );
+
+  try {
+    await cartRef.set(
+      {
+        // PRODUCT INFORMATION
+        'productId': productId,
+
+        'title': product["title"] ?? "",
+
+        'description':
+            product["description"] ?? "",
+
+        'imageUrl':
+            product["imageUrl"] ??
+            product["image"] ??
+            "",
+
+        // PRICE INFORMATION
+        'price': _formatPrice(effectivePrice),
+
+        'originalPrice':
+            _formatPrice(originalPrice),
+
+        // CAMPAIGN INFORMATION
+        'campaignId': campaign != null
+            ? (campaign['campaignId'] ?? '')
+                .toString()
+            : '',
+
+        'campaignOffer': campaign != null
+            ? (campaign['offer'] ?? '')
+                .toString()
+            : '',
+
+        // SELLER INFORMATION
+        'sellerName':
+            product["sellerName"] ??
+            "Local Artisan",
+
+        'sellerId':
+            product["sellerId"] ?? "",
+
+        // CART INFORMATION
+        'quantity': 1,
+
+        'addedAt':
+            FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+
+    if (!context.mounted) return;
+
+    // =======================================================
+    // ADDED TO CART DIALOG
+    // =======================================================
+
+    await showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFFFFFCF8),
+          elevation: 8,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          contentPadding: const EdgeInsets.fromLTRB(
+            20,
+            20,
+            20,
+            16,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE7F3E8),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_rounded,
+                  color: Color(0xFF5A9B63),
+                  size: 27,
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              const Text(
+                "Added to cart",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF292929),
+                ),
+              ),
+
+              const SizedBox(height: 5),
+
+              const Text(
+                "Your product is ready for checkout.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.4,
+                  color: Color(0xFF777777),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              SizedBox(
+                height: 40,
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        const Color(0xFFD66A16),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    "Continue shopping",
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  } catch (e) {
+    if (!context.mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFFFFFCF8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          contentPadding: const EdgeInsets.fromLTRB(
+            20,
+            20,
+            20,
+            16,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFFE7D3),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.error_outline_rounded,
+                  color: Color(0xFFD66A16),
+                  size: 22,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                "Couldn't add to cart",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF292929),
+                ),
+              ),
+              const SizedBox(height: 5),
+              const Text(
+                "Please try again.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF777777),
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 40,
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        const Color(0xFFD66A16),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    "Okay",
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
 
   // =========================================================
   // CHANGE QUANTITY
@@ -946,688 +1237,308 @@ class ProductDetailPage extends StatelessWidget {
   // BUILD
   // =========================================================
 
-  @override
-  Widget build(
-    BuildContext context,
-  ) {
-    // =======================================================
-    // PRODUCT DATA
-    // =======================================================
+@override
+Widget build(BuildContext context) {
+  // =========================================================
+  // PRODUCT ID
+  // =========================================================
 
-    final String productId =
-        product["productId"] ?? "";
+  final String productId = product["productId"] ?? "";
 
-    final String productTitle =
-        product["title"] ?? "";
+  // =========================================================
+  // LIVE PRODUCT CATALOG STREAM
+  // =========================================================
 
-    final String productDescription =
-        product["description"] ?? "";
+  final productStream = productId.trim().isNotEmpty
+      ? FirebaseFirestore.instance
+          .collection('products')
+          .doc(productId)
+          .snapshots()
+      : null;
 
-    final double originalPrice =
-        _toDouble(product["price"]);
+  return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+    stream: productStream,
+    builder: (context, productSnapshot) {
+      // =======================================================
+      // MERGE PRODUCT DATA
+      // =======================================================
 
-    final String imagePath =
-        product["imageUrl"] ??
-        product["image"] ??
-        "";
+      final Map<String, dynamic> catalogProduct = {
+        ...product,
+      };
 
-    final String cleanImage =
-        imagePath
-            .replaceAll('"', '')
-            .trim();
+      if (productSnapshot.hasData &&
+          productSnapshot.data!.exists) {
+        final firestoreData = productSnapshot.data!.data();
 
-    // =======================================================
-    // SELLER
-    // =======================================================
+        if (firestoreData != null) {
+          catalogProduct.addAll(firestoreData);
+        }
+      }
 
-    final String rawSellerName =
-        product["sellerName"] ?? "";
+      // =======================================================
+      // PRODUCT DATA
+      // =======================================================
 
-    final String sellerName =
-        rawSellerName.trim().isNotEmpty
-            ? rawSellerName.trim()
-            : "Local Artisan";
+      final String productTitle =
+          (catalogProduct["title"] ?? "").toString();
 
-    final String sellerId =
-        product["sellerId"] ?? "";
+      final String productDescription =
+          (catalogProduct["description"] ?? "").toString();
 
-    // =======================================================
-    // ACTIVE CAMPAIGN STREAM
-    // =======================================================
+      final String shortDescription =
+          (catalogProduct["shortDescription"] ?? "").toString();
 
-    final campaignStream =
-        FirebaseFirestore.instance
-            .collection('campaigns')
-            .where(
-              'enabled',
-              isEqualTo: true,
-            )
-            .snapshots();
+      final double originalPrice =
+          _toDouble(catalogProduct["price"]);
 
-    return StreamBuilder<
-        QuerySnapshot<Map<String, dynamic>>>(
-      stream: campaignStream,
-      builder: (
-        context,
-        campaignSnapshot,
-      ) {
-        // =====================================================
-        // FIND ACTIVE CAMPAIGN
-        // =====================================================
+      final String imagePath =
+          (catalogProduct["imageUrl"] ??
+                  catalogProduct["image"] ??
+                  "")
+              .toString();
 
-        Map<String, dynamic>?
-            activeCampaign;
+      final String cleanImage =
+          imagePath.replaceAll('"', '').trim();
 
-        if (campaignSnapshot.hasData) {
-          for (final doc
-              in campaignSnapshot.data!.docs) {
-            final data = doc.data();
+      // =======================================================
+      // SELLER
+      // =======================================================
 
-            final String status =
-                (data['status'] ?? '')
-                    .toString();
+      final String rawSellerName =
+          (catalogProduct["sellerName"] ?? "").toString();
 
-            final String
-                campaignProductId =
-                (data['productId'] ?? '')
-                    .toString();
+      final String sellerName =
+          rawSellerName.trim().isNotEmpty
+              ? rawSellerName.trim()
+              : "Local Artisan";
 
-            if (status == 'Active' &&
-                campaignProductId ==
-                    productId) {
-              activeCampaign = {
-                ...data,
-                'campaignId': doc.id,
-              };
+      final String sellerId =
+          (catalogProduct["sellerId"] ?? "").toString();
 
-              break;
+      // =======================================================
+      // CAMPAIGN STREAM
+      // =======================================================
+
+      final campaignStream = FirebaseFirestore.instance
+          .collection('campaigns')
+          .where(
+            'enabled',
+            isEqualTo: true,
+          )
+          .snapshots();
+
+      return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: campaignStream,
+        builder: (context, campaignSnapshot) {
+          // =====================================================
+          // FIND ACTIVE CAMPAIGN
+          // =====================================================
+
+          Map<String, dynamic>? activeCampaign;
+
+          if (campaignSnapshot.hasData) {
+            for (final doc in campaignSnapshot.data!.docs) {
+              final data = doc.data();
+
+              final String status =
+                  (data['status'] ?? '').toString();
+
+              final String campaignProductId =
+                  (data['productId'] ?? '').toString();
+
+              if (status == 'Active' &&
+                  campaignProductId == productId) {
+                activeCampaign = {
+                  ...data,
+                  'campaignId': doc.id,
+                };
+                break;
+              }
             }
           }
-        }
 
-        // =====================================================
-        // DISCOUNT
-        // =====================================================
+          // =====================================================
+          // CAMPAIGN / PRICE
+          // =====================================================
 
-        final double
-            discountPercentage =
-            activeCampaign != null
-                ? _getDiscountPercentage(
-                    activeCampaign!,
-                  )
-                : 0.0;
+          final double discountPercentage =
+              activeCampaign != null
+                  ? _getDiscountPercentage(activeCampaign)
+                  : 0.0;
 
-        // =====================================================
-        // VALID CAMPAIGN
-        // =====================================================
+          final bool hasCampaign =
+              activeCampaign != null &&
+              discountPercentage > 0.0;
 
-        final bool hasCampaign =
-            activeCampaign != null &&
-            discountPercentage > 0.0;
+          final double campaignPrice =
+              hasCampaign
+                  ? _getCampaignPrice(
+                      originalPrice,
+                      discountPercentage,
+                    )
+                  : originalPrice;
 
-        // =====================================================
-        // EFFECTIVE PRICE
-        // =====================================================
+          final String displayPrice =
+              _formatPrice(campaignPrice);
 
-        final double campaignPrice =
-            hasCampaign
-                ? _getCampaignPrice(
-                    originalPrice,
-                    discountPercentage,
-                  )
-                : originalPrice;
+          final String originalPriceText =
+              _formatPrice(originalPrice);
 
-        final String displayPrice =
-            _formatPrice(campaignPrice);
+          final String campaignName =
+              activeCampaign?['name']?.toString().trim() ?? '';
 
-        final String originalPriceText =
-            _formatPrice(originalPrice);
+          final String campaignOffer =
+              activeCampaign?['offer']?.toString().trim() ?? '';
 
-        // =====================================================
-        // SCREEN
-        // =====================================================
+          // =====================================================
+          // SCREEN
+          // =====================================================
 
-        return Scaffold(
-          // ===================================================
-          // APP BAR
-          // ===================================================
+          return Scaffold(
+            backgroundColor: const Color(0xFFFFFCF8),
 
-          appBar: AppBar(
-            elevation: 0,
-            title: Text(
-              productTitle,
-              maxLines: 1,
-              overflow:
-                  TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight:
-                    FontWeight.w600,
-              ),
-            ),
-            backgroundColor:
-                const Color(0xFFD66A16),
-            iconTheme:
-                const IconThemeData(
-              color: Colors.white,
-            ),
-            actions: [
-              _buildCartIcon(context),
-              const SizedBox(width: 6),
-            ],
-          ),
+            // ===================================================
+            // APP BAR
+            // ===================================================
 
-          // ===================================================
-          // BODY
-          // ===================================================
+            appBar: AppBar(
+              toolbarHeight: 68,
+              elevation: 0,
+              backgroundColor: const Color(0xFFD66A16),
+              foregroundColor: Colors.white,
 
-          body: Column(
-            children: [
-              // =================================================
-              // PRODUCT IMAGE
-              // =================================================
-
-              _buildImage(
-                context,
-                cleanImage,
-              ),
-
-              // =================================================
-              // PRODUCT INFORMATION
-              // =================================================
-
-              Expanded(
-                child:
-                    SingleChildScrollView(
-                  physics:
-                      const BouncingScrollPhysics(),
-                  padding:
-                      const EdgeInsets.fromLTRB(
-                    16,
-                    18,
-                    16,
-                    20,
-                  ),
-                  child: Column(
-                    crossAxisAlignment:
-                        CrossAxisAlignment
-                            .start,
-                    children: [
-                      // =========================================
-                      // PRODUCT NAME
-                      // =========================================
-
-                      Text(
-                        productTitle,
-                        style:
-                            const TextStyle(
-                          fontSize: 23,
-                          fontWeight:
-                              FontWeight.w800,
-                          color:
-                              Color(0xFF222222),
-                        ),
-                      ),
-
-                      const SizedBox(
-                          height: 10),
-
-                      // =========================================
-                      // CAMPAIGN BADGE
-                      // =========================================
-
-                      if (hasCampaign)
-                        Container(
-                          padding:
-                              const EdgeInsets
-                                  .symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration:
-                              BoxDecoration(
-                            color:
-                                const Color(
-                              0xFFFFE8D5,
-                            ),
-                            borderRadius:
-                                BorderRadius
-                                    .circular(
-                              8,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize:
-                                MainAxisSize
-                                    .min,
-                            children: [
-                              const Icon(
-                                Icons
-                                    .local_offer_rounded,
-                                size: 16,
-                                color:
-                                    Color(
-                                  0xFFD66A16,
-                                ),
-                              ),
-                              const SizedBox(
-                                width: 5,
-                              ),
-                              Text(
-                                '${_formatPrice(discountPercentage)}% OFF',
-                                style:
-                                    const TextStyle(
-                                  fontWeight:
-                                      FontWeight
-                                          .w800,
-                                  fontSize: 13,
-                                  color:
-                                      Color(
-                                    0xFFD66A16,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                      if (hasCampaign)
-                        const SizedBox(
-                          height: 9,
-                        ),
-
-                      // =========================================
-                      // PRICE
-                      // =========================================
-
-                      if (hasCampaign)
-                        Row(
-                          crossAxisAlignment:
-                              CrossAxisAlignment
-                                  .center,
-                          children: [
-                            Text(
-                              '₹$originalPriceText',
-                              style:
-                                  TextStyle(
-                                fontSize: 16,
-                                color: Colors
-                                    .grey
-                                    .shade500,
-                                decoration:
-                                    TextDecoration
-                                        .lineThrough,
-                                decorationThickness:
-                                    2,
-                              ),
-                            ),
-                            const SizedBox(
-                                width: 10),
-                            Text(
-                              '₹$displayPrice',
-                              style:
-                                  const TextStyle(
-                                fontSize: 25,
-                                fontWeight:
-                                    FontWeight
-                                        .w800,
-                                color:
-                                    Color(
-                                  0xFFD66A16,
-                                ),
-                              ),
-                            ),
-                          ],
-                        )
-                      else
-                        Text(
-                          '₹$displayPrice',
-                          style:
-                              const TextStyle(
-                            fontSize: 23,
-                            fontWeight:
-                                FontWeight.w800,
-                            color:
-                                Color(
-                              0xFFD66A16,
-                            ),
-                          ),
-                        ),
-
-                      // =========================================
-                      // CAMPAIGN NAME
-                      // =========================================
-
-                      if (hasCampaign)
-                        Padding(
-                          padding:
-                              const EdgeInsets
-                                  .only(
-                            top: 5,
-                          ),
-                          child: Text(
-                            activeCampaign![
-                                        'name']
-                                    ?.toString() ??
-                                'Special Offer',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors
-                                  .grey
-                                  .shade600,
-                              fontWeight:
-                                  FontWeight
-                                      .w500,
-                            ),
-                          ),
-                        ),
-
-                      const SizedBox(
-                          height: 18),
-
-                      // =========================================
-                      // DESCRIPTION
-                      // =========================================
-
-                      const Text(
-                        "About this product",
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight:
-                              FontWeight.w700,
-                        ),
-                      ),
-
-                      const SizedBox(
-                          height: 8),
-
-                      Text(
-                        productDescription,
-                        style:
-                            const TextStyle(
-                          fontSize: 15,
-                          height: 1.5,
-                          color:
-                              Color(0xFF555555),
-                        ),
-                      ),
-
-                      const SizedBox(
-                          height: 20),
-
-                      // =========================================
-                      // SELLER
-                      // =========================================
-
-                      Container(
-                        padding:
-                            const EdgeInsets.all(
-                          14,
-                        ),
-                        decoration:
-                            BoxDecoration(
-                          color:
-                              const Color(
-                            0xFFFFF7F0,
-                          ),
-                          borderRadius:
-                              BorderRadius
-                                  .circular(
-                            14,
-                          ),
-                          border: Border.all(
-                            color:
-                                const Color(
-                              0xFFF1D8C5,
-                            ),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 42,
-                              height: 42,
-                              decoration:
-                                  const BoxDecoration(
-                                color:
-                                    Color(
-                                  0xFFFFE8D5,
-                                ),
-                                shape:
-                                    BoxShape
-                                        .circle,
-                              ),
-                              child:
-                                  const Icon(
-                                Icons
-                                    .storefront_outlined,
-                                color:
-                                    Color(
-                                  0xFFD66A16,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(
-                                width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment
-                                        .start,
-                                children: [
-                                  const Text(
-                                    "Sold by",
-                                    style:
-                                        TextStyle(
-                                      fontSize:
-                                          12,
-                                      color:
-                                          Colors
-                                              .grey,
-                                    ),
-                                  ),
-                                  const SizedBox(
-                                      height: 2),
-                                  Text(
-                                    sellerName,
-                                    maxLines: 1,
-                                    overflow:
-                                        TextOverflow
-                                            .ellipsis,
-                                    style:
-                                        const TextStyle(
-                                      fontSize:
-                                          15,
-                                      fontWeight:
-                                          FontWeight
-                                              .w700,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(
-                          height: 24),
-
-                      // =========================================
-                      // ITEM DETAILS
-                      // =========================================
-
-                      const Text(
-                        "Item Details",
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight:
-                              FontWeight.w700,
-                        ),
-                      ),
-
-                      const SizedBox(
-                          height: 10),
-
-                      _detailRow(
-                        Icons.handyman_outlined,
-                        "Handmade product",
-                      ),
-
-                      _detailRow(
-                        Icons.eco_outlined,
-                        "Eco-friendly",
-                      ),
-
-                      _detailRow(
-                        Icons.location_on_outlined,
-                        "Locally crafted",
-                      ),
-
-                      _detailRow(
-                        Icons
-                            .auto_awesome_outlined,
-                        "Customization may be available",
-                      ),
-
-                      const SizedBox(
-                          height: 10),
-                    ],
-                  ),
+              leading: IconButton(
+                icon: const Icon(
+                  Icons.arrow_back_rounded,
+                  size: 27,
                 ),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
               ),
 
-              // =================================================
-              // BOTTOM ACTIONS
-              // =================================================
-
-              Container(
-                padding:
-                    const EdgeInsets.fromLTRB(
-                  16,
-                  12,
-                  16,
-                  16,
-                ),
-                decoration:
-                    BoxDecoration(
+              title: Text(
+                productTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
                   color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.2,
+                ),
+              ),
+
+              actions: [
+                _buildCartIcon(context),
+                const SizedBox(width: 4),
+              ],
+            ),
+
+            // ===================================================
+            // BOTTOM ACTION BAR
+            // ===================================================
+
+            bottomNavigationBar: SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(
+                  14,
+                  10,
+                  14,
+                  10,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: const Border(
+                    top: BorderSide(
+                      color: Color(0xFFEDE2D8),
+                      width: 0.8,
+                    ),
+                  ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black
-                          .withOpacity(0.08),
-                      blurRadius: 15,
-                      offset:
-                          const Offset(0, -4),
+                      color: Colors.black.withOpacity(0.06),
+                      blurRadius: 14,
+                      offset: const Offset(0, -3),
                     ),
                   ],
                 ),
                 child: Row(
                   children: [
-                    // ===========================================
                     // ADD TO CART
-                    // ===========================================
-
-                    Expanded(
-                      child:
-                          _buildCartAction(
-                        context,
-                        productId,
-                      ),
-                    ),
-
-                    const SizedBox(
-                        width: 10),
-
-                    // ===========================================
-                    // BUY NOW
-                    // ===========================================
-
                     Expanded(
                       child: SizedBox(
                         height: 48,
-                        child:
-                            ElevatedButton(
+                        child: _buildCartAction(
+                          context,
+                          productId,
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(width: 9),
+
+                    // BUY NOW
+                    Expanded(
+                      child: SizedBox(
+                        height: 48,
+                        child: ElevatedButton(
                           onPressed: () {
-                            Navigator.of(
-                              context,
-                            ).push(
+                            Navigator.of(context).push(
                               MaterialPageRoute(
-                                builder:
-                                    (context) =>
-                                        BuyPage(
-                                  productId:
-                                      productId,
-
-                                  productName:
-                                      productTitle,
-
-                                  // Current effective
-                                  // campaign price.
-                                  productPrice:
-                                      displayPrice,
-
-                                  productImage:
-                                      cleanImage,
-
-                                  sellerName:
-                                      sellerName,
-
-                                  sellerId:
-                                      sellerId,
-
-                                  // IMPORTANT:
-                                  // Pass campaign metadata
-                                  // to checkout.
+                                builder: (context) => BuyPage(
+                                  productId: productId,
+                                  productName: productTitle,
+                                  productPrice: displayPrice,
+                                  productImage: cleanImage,
+                                  sellerName: sellerName,
+                                  sellerId: sellerId,
                                   originalProductPrice:
                                       originalPriceText,
-
-                                  campaignId:
-                                      hasCampaign
-                                          ? (activeCampaign![
-                                                      'campaignId'] ??
-                                                  '')
-                                              .toString()
-                                          : '',
-
-                                  campaignOffer:
-                                      hasCampaign
-                                          ? (activeCampaign![
-                                                      'offer'] ??
-                                                  '')
-                                              .toString()
-                                          : '',
+                                  campaignId: hasCampaign
+                                      ? (activeCampaign![
+                                                  'campaignId'] ??
+                                              '')
+                                          .toString()
+                                      : '',
+                                  campaignOffer: hasCampaign
+                                      ? (activeCampaign!['offer'] ??
+                                              '')
+                                          .toString()
+                                      : '',
                                 ),
                               ),
                             );
                           },
-                          style:
-                              ElevatedButton
-                                  .styleFrom(
+                          style: ElevatedButton.styleFrom(
                             backgroundColor:
-                                const Color(
-                              0xFF8D5314,
-                            ),
-                            foregroundColor:
-                                Colors.white,
-                            shape:
-                                RoundedRectangleBorder(
+                                const Color(0xFF8D5314),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
                               borderRadius:
-                                  BorderRadius
-                                      .circular(
-                                12,
-                              ),
+                                  BorderRadius.circular(14),
                             ),
                           ),
-                          child:
-                              const Text(
-                            "Buy Now",
-                            style:
-                                TextStyle(
-                              fontWeight:
-                                  FontWeight
-                                      .w700,
-                            ),
+                          child: const Row(
+                            mainAxisAlignment:
+                                MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.bolt_rounded,
+                                size: 19,
+                              ),
+                              SizedBox(width: 6),
+                              Text(
+                                "Buy Now",
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -1635,48 +1546,749 @@ class ProductDetailPage extends StatelessWidget {
                   ],
                 ),
               ),
-            ],
-          ),
-        );
-      },
-    );
-  }
+            ),
+
+            // ===================================================
+            // BODY
+            // ===================================================
+
+            body: CustomScrollView(
+              physics: const BouncingScrollPhysics(),
+              slivers: [
+                // =================================================
+                // PRODUCT IMAGE
+                // =================================================
+
+                SliverToBoxAdapter(
+                  child: Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: const BorderRadius.only(
+                          bottomLeft: Radius.circular(24),
+                          bottomRight: Radius.circular(24),
+                        ),
+                        child: _buildImage(
+                          context,
+                          cleanImage,
+                        ),
+                      ),
+
+                      // CAMPAIGN BADGE
+                      if (hasCampaign)
+                        Positioned(
+                          right: 14,
+                          top: 14,
+                          child: Container(
+                            padding:
+                                const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 7,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFD66A16),
+                              borderRadius:
+                                  BorderRadius.circular(18),
+                              boxShadow: [
+                                BoxShadow(
+                                  color:
+                                      Colors.black.withOpacity(
+                                    0.12,
+                                  ),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.local_offer_rounded,
+                                  size: 14,
+                                  color: Colors.white,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${_formatPrice(discountPercentage)}% OFF',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+                // =================================================
+                // PRODUCT CONTENT
+                // =================================================
+
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    16,
+                    18,
+                    16,
+                    24,
+                  ),
+                  sliver: SliverList(
+                    delegate: SliverChildListDelegate(
+                      [
+                        // =========================================
+                        // TITLE
+                        // =========================================
+
+                        Text(
+                          productTitle,
+                          style: const TextStyle(
+                            fontSize: 23,
+                            height: 1.15,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF202020),
+                            letterSpacing: -0.35,
+                          ),
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        // =========================================
+                        // PRICE
+                        // =========================================
+
+                        if (hasCampaign)
+                          Row(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.center,
+                            children: [
+                              Text(
+                                '₹$originalPriceText',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: Color(0xFF888888),
+                                  decoration:
+                                      TextDecoration.lineThrough,
+                                ),
+                              ),
+                              const SizedBox(width: 9),
+                              Text(
+                                '₹$displayPrice',
+                                style: const TextStyle(
+                                  fontSize: 25,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFFD66A16),
+                                ),
+                              ),
+                            ],
+                          )
+                        else
+                          Text(
+                            '₹$displayPrice',
+                            style: const TextStyle(
+                              fontSize: 25,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFFD66A16),
+                            ),
+                          ),
+
+                        // =========================================
+                        // CAMPAIGN INFORMATION
+                        // =========================================
+
+                        if (hasCampaign &&
+                            (campaignName.isNotEmpty ||
+                                campaignOffer.isNotEmpty))
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              top: 11,
+                            ),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.fromLTRB(
+                                12,
+                                10,
+                                12,
+                                10,
+                              ),
+                              decoration: BoxDecoration(
+                                gradient:
+                                    const LinearGradient(
+                                  colors: [
+                                    Color(0xFFFFF4E9),
+                                    Color(0xFFFFEBDD),
+                                  ],
+                                ),
+                                borderRadius:
+                                    BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: const Color(0xFFF4D1B5),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 34,
+                                    height: 34,
+                                    decoration:
+                                        const BoxDecoration(
+                                      color: Color(0xFFFFDCC0),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.local_offer_rounded,
+                                      size: 18,
+                                      color: Color(0xFFD66A16),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        if (campaignName.isNotEmpty)
+                                          Text(
+                                            campaignName,
+                                            maxLines: 1,
+                                            overflow:
+                                                TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                              fontWeight:
+                                                  FontWeight.w800,
+                                              color:
+                                                  Color(0xFF4D2D17),
+                                            ),
+                                          ),
+                                        if (campaignOffer.isNotEmpty)
+                                          ...[
+                                            if (campaignName
+                                                .isNotEmpty)
+                                              const SizedBox(
+                                                height: 2,
+                                              ),
+                                            Text(
+                                              campaignOffer,
+                                              maxLines: 2,
+                                              overflow:
+                                                  TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                                color:
+                                                    Color(0xFF765D4D),
+                                              ),
+                                            ),
+                                          ],
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                        const SizedBox(height: 22),
+
+                        // =========================================
+                        // ABOUT THIS PRODUCT
+                        // =========================================
+
+                        Row(
+                          children: [
+                            Container(
+                              width: 4,
+                              height: 22,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFD66A16),
+                                borderRadius:
+                                    BorderRadius.circular(4),
+                              ),
+                            ),
+                            const SizedBox(width: 9),
+                            const Text(
+                              "About this product",
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF252525),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 9),
+
+                        // =========================================
+                        // DESCRIPTION
+                        // =========================================
+
+                        if (shortDescription.trim().isNotEmpty)
+                          Text(
+                            shortDescription.trim(),
+                            style: const TextStyle(
+                              fontSize: 14,
+                              height: 1.55,
+                              color: Color(0xFF666666),
+                            ),
+                          )
+                        else if (productDescription
+                            .trim()
+                            .isNotEmpty)
+                          Text(
+                            productDescription.trim(),
+                            style: const TextStyle(
+                              fontSize: 14,
+                              height: 1.55,
+                              color: Color(0xFF666666),
+                            ),
+                          )
+                        else
+                          const Text(
+                            "Product details provided by the seller.",
+                            style: TextStyle(
+                              fontSize: 14,
+                              height: 1.5,
+                              color: Color(0xFF777777),
+                            ),
+                          ),
+
+                        // =========================================
+                        // FULL DESCRIPTION
+                        // =========================================
+
+                        if (productDescription.trim().isNotEmpty &&
+                            shortDescription.trim().isNotEmpty &&
+                            productDescription.trim() !=
+                                shortDescription.trim())
+                          ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              productDescription.trim(),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                height: 1.55,
+                                color: Color(0xFF747474),
+                              ),
+                            ),
+                          ],
+
+                        const SizedBox(height: 20),
+
+                        // =========================================
+                        // SELLER CARD
+                        // =========================================
+
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF7F0),
+                            borderRadius:
+                                BorderRadius.circular(16),
+                            border: Border.all(
+                              color: const Color(0xFFF0D8C5),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 42,
+                                height: 42,
+                                decoration:
+                                    const BoxDecoration(
+                                  color: Color(0xFFFFE7D3),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.storefront_outlined,
+                                  color: Color(0xFFD66A16),
+                                  size: 21,
+                                ),
+                              ),
+
+                              const SizedBox(width: 11),
+
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      "Sold by",
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Color(0xFF8A8A8A),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      sellerName,
+                                      maxLines: 1,
+                                      overflow:
+                                          TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight:
+                                            FontWeight.w800,
+                                        color: Color(0xFF2B2B2B),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              if (sellerId.trim().isNotEmpty)
+                                Container(
+                                  padding:
+                                      const EdgeInsets.symmetric(
+                                    horizontal: 9,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius:
+                                        BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color:
+                                          const Color(0xFFF0D8C5),
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.verified_outlined,
+                                    size: 17,
+                                    color: Color(0xFF5A9B63),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 18),
+
+                        // =========================================
+                        // PRODUCT CATALOG INFORMATION
+                        // =========================================
+
+                        _buildCatalogInformation(
+                          catalogProduct,
+                        ),
+
+                        const SizedBox(height: 14),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    },
+  );
+}
 
   // =========================================================
-  // DETAIL ROW
+  // PRODUCT CATALOG INFORMATION
+  // =========================================================
+  //
+  // This section is data-driven. It reads customer-facing
+  // catalogue fields from the Firestore products document and
+  // renders only fields that actually contain values.
   // =========================================================
 
-  Widget _detailRow(
-    IconData icon,
-    String text,
+  Widget _buildCatalogInformation(
+    Map<String, dynamic> catalogProduct,
   ) {
-    return Padding(
-      padding:
-          const EdgeInsets.only(
-        bottom: 10,
-      ),
-      child: Row(
-        children: [
-          Icon(
-            icon,
-            size: 20,
-            color:
-                const Color(0xFFD66A16),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style:
-                  const TextStyle(
-                fontSize: 14,
-                color:
-                    Color(0xFF555555),
+    final String category =
+        _catalogString(catalogProduct['category']);
+
+    final String subcategory =
+        _catalogString(catalogProduct['subcategory']);
+
+    final String sellerCategory =
+        _catalogString(catalogProduct['sellerCategory']);
+
+    final List<String> tags =
+        _catalogStringList(catalogProduct['tags']);
+
+    final bool hasCategory =
+        category.isNotEmpty;
+
+    final bool hasSubcategory =
+        subcategory.isNotEmpty;
+
+    final bool hasSellerCategory =
+        sellerCategory.isNotEmpty;
+
+    final bool hasTags =
+        tags.isNotEmpty;
+
+    if (!hasCategory &&
+        !hasSubcategory &&
+        !hasSellerCategory &&
+        !hasTags) {
+      return const SizedBox.shrink();
+    }
+
+    final List<Widget> informationRows = [];
+
+    if (hasCategory) {
+      informationRows.add(
+        _buildCatalogRow(
+          icon: Icons.category_outlined,
+          label: "Category",
+          value: category,
+        ),
+      );
+    }
+
+    if (hasSubcategory) {
+      if (informationRows.isNotEmpty) {
+        informationRows.add(
+          const SizedBox(height: 10),
+        );
+      }
+
+      informationRows.add(
+        _buildCatalogRow(
+          icon: Icons.grid_view_rounded,
+          label: "Subcategory",
+          value: subcategory,
+        ),
+      );
+    }
+
+    if (hasSellerCategory) {
+      if (informationRows.isNotEmpty) {
+        informationRows.add(
+          const SizedBox(height: 10),
+        );
+      }
+
+      informationRows.add(
+        _buildCatalogRow(
+          icon: Icons.storefront_outlined,
+          label: "Seller category",
+          value: sellerCategory,
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment:
+          CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 4,
+              height: 21,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD66A16),
+                borderRadius:
+                    BorderRadius.circular(4),
               ),
             ),
+            const SizedBox(width: 9),
+            const Text(
+              "Product information",
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF252525),
+                letterSpacing: -0.15,
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 10),
+
+        if (informationRows.isNotEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(
+              13,
+              13,
+              13,
+              13,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius:
+                  BorderRadius.circular(17),
+              border: Border.all(
+                color: const Color(0xFFE9E2DD),
+              ),
+            ),
+            child: Column(
+              children: informationRows,
+            ),
+          ),
+
+        if (hasTags) ...[
+          const SizedBox(height: 14),
+
+          Row(
+            children: [
+              Container(
+                width: 4,
+                height: 21,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD66A16),
+                  borderRadius:
+                      BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(width: 9),
+              const Text(
+                "Tags",
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF252525),
+                  letterSpacing: -0.15,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 10),
+
+          Wrap(
+            spacing: 7,
+            runSpacing: 7,
+            children: [
+              for (final tag in tags)
+                _buildTagChip(tag),
+            ],
           ),
         ],
+      ],
+    );
+  }
+
+  Widget _buildCatalogRow({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      crossAxisAlignment:
+          CrossAxisAlignment.center,
+      children: [
+        _buildInfoIcon(icon),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF8A8A8A),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                maxLines: 2,
+                overflow:
+                    TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF303030),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTagChip(String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 7,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3E8),
+        borderRadius:
+            BorderRadius.circular(20),
+        border: Border.all(
+          color: const Color(0xFFF0D1B8),
+        ),
+      ),
+      child: Text(
+        value,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF7B4A25),
+        ),
       ),
     );
   }
+
+  String _catalogString(dynamic value) {
+    if (value == null) return '';
+
+    return value
+        .toString()
+        .trim();
+  }
+
+  List<String> _catalogStringList(dynamic value) {
+    if (value is! Iterable) {
+      return const [];
+    }
+
+    final List<String> values = [];
+
+    for (final item in value) {
+      final String text =
+          item?.toString().trim() ?? '';
+
+      if (text.isNotEmpty &&
+          !values.contains(text)) {
+        values.add(text);
+      }
+    }
+
+    return values;
+  }
+
+  // =========================================================
+  // INFO ICON
+  // =========================================================
+
+  Widget _buildInfoIcon(
+    IconData icon,
+  ) {
+    return Container(
+      width: 36,
+      height: 36,
+      decoration:
+          const BoxDecoration(
+        color: Color(0xFFFFF0E4),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(
+        icon,
+        size: 18,
+        color: Color(0xFFD66A16),
+      ),
+    );
+  }
+
 }

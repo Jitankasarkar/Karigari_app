@@ -1133,34 +1133,34 @@ class _ProductPageState extends State<ProductPage> {
                             const Spacer(),
                             SizedBox(
                               height: 34,
-                              child: ElevatedButton(
-                                onPressed: product == null
-                                    ? null
-                                    : () {
-                                        _openProductDetails(
-                                          productId,
-                                          product,
-                                        );
-                                      },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: primaryOrange,
-                                  foregroundColor: Colors.white,
-                                  elevation: 0,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                child: const Text(
-                                  'Know more',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ),
+                              // child: ElevatedButton(
+                              //   onPressed: product == null
+                              //       ? null
+                              //       : () {
+                              //           _openProductDetails(
+                              //             productId,
+                              //             product,
+                              //           );
+                              //         },
+                              //   style: ElevatedButton.styleFrom(
+                              //     backgroundColor: primaryOrange,
+                              //     foregroundColor: Colors.white,
+                              //     elevation: 0,
+                              //     padding: const EdgeInsets.symmetric(
+                              //       horizontal: 12,
+                              //     ),
+                              //     shape: RoundedRectangleBorder(
+                              //       borderRadius: BorderRadius.circular(12),
+                              //     ),
+                              //   ),
+                              //   // child: const Text(
+                              //   //   'Know more',
+                              //   //   style: TextStyle(
+                              //   //     fontSize: 11,
+                              //   //     fontWeight: FontWeight.w800,
+                              //   //   ),
+                              //   // ),
+                              // ),
                             ),
                           ],
                         ),
