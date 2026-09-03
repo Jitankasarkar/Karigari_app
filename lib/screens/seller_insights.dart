@@ -43,13 +43,6 @@ class _SellerInsightsState extends State<SellerInsights>
   // =========================================================
 
   late final AnimationController _animationController;
-  Timer? _growthAgentTypingTimer;
-  Timer? _growthAgentCursorTimer;
-
-  static const String _growthAgentTitle = 'Your Growth Agent';
-
-  int _growthAgentTypedCharacters = 0;
-  bool _growthAgentCursorVisible = true;
 
   // =========================================================
   // SCROLL
@@ -120,7 +113,6 @@ class _SellerInsightsState extends State<SellerInsights>
     );
 
     _animationController.forward();
-    _startGrowthAgentTyping();
 
     // ---------------------------------------------------------
     // Scroll controller
@@ -149,59 +141,9 @@ class _SellerInsightsState extends State<SellerInsights>
       });
     }
   }
-
   // =========================================================
   // ANALYTICS LISTENER
   // =========================================================
-  void _startGrowthAgentTyping() {
-    _growthAgentTypingTimer?.cancel();
-    _growthAgentCursorTimer?.cancel();
-
-    _growthAgentTypedCharacters = 0;
-    _growthAgentCursorVisible = true;
-
-    if (mounted) {
-      setState(() {});
-    }
-
-    // Blinking cursor.
-    _growthAgentCursorTimer = Timer.periodic(
-      const Duration(milliseconds: 500),
-      (_) {
-        if (!mounted) return;
-
-        setState(() {
-          _growthAgentCursorVisible = !_growthAgentCursorVisible;
-        });
-      },
-    );
-
-    // Letter-by-letter typing.
-    _growthAgentTypingTimer = Timer.periodic(const Duration(milliseconds: 85), (
-      timer,
-    ) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-
-      if (_growthAgentTypedCharacters < _growthAgentTitle.length) {
-        setState(() {
-          _growthAgentTypedCharacters++;
-        });
-      } else {
-        timer.cancel();
-
-        // Keep the complete title visible for a moment,
-        // then restart the typing cycle.
-        Future.delayed(const Duration(milliseconds: 1800), () {
-          if (!mounted) return;
-
-          _startGrowthAgentTyping();
-        });
-      }
-    });
-  }
 
   void _onAnalyticsChanged() {
     final analytics = SellerAnalyticsPage.latestAnalytics.value;
@@ -280,10 +222,6 @@ class _SellerInsightsState extends State<SellerInsights>
       return;
     }
 
-    // ---------------------------------------------------------
-    // START REASONING STATE
-    // ---------------------------------------------------------
-
     setState(() {
       _isGeneratingInsight = true;
       _hasGeneratedInsight = false;
@@ -293,21 +231,14 @@ class _SellerInsightsState extends State<SellerInsights>
     debugPrint('GROWTH INSIGHT: started');
     debugPrint('GROWTH INSIGHT: product = ${top.name}');
 
+    // Keep the agent state visible for a natural 2–3 second response
+    // experience, even when Gemini responds very quickly.
+    final startedAt = DateTime.now();
+
     try {
-      // -------------------------------------------------------
-      // FIREBASE AI WITH APP CHECK
-      // -------------------------------------------------------
+      final model = _geminiModel();
 
-      final model = FirebaseAI.googleAI(
-        appCheck: FirebaseAppCheck.instance,
-      ).generativeModel(model: 'gemini-3.6-flash');
-
-      // -------------------------------------------------------
-      // PROMPT
-      // -------------------------------------------------------
-
-      final prompt =
-          '''
+      final prompt = '''
 You are the AI growth agent for a small artisan marketplace seller.
 
 Analyze ONLY the provided business data.
@@ -343,48 +274,50 @@ Rules:
 
       debugPrint('GROWTH INSIGHT: sending request to Gemini');
 
-      // -------------------------------------------------------
-      // GEMINI REQUEST
-      // -------------------------------------------------------
-
-      final response = await model.generateContent([Content.text(prompt)]);
-
-      debugPrint('GROWTH INSIGHT: Gemini responded');
+      final response = await model
+          .generateContent([Content.text(prompt)])
+          .timeout(const Duration(seconds: 30));
 
       final text = response.text?.trim() ?? '';
 
-      debugPrint('GROWTH INSIGHT RESPONSE: $text');
+      // Minimum response time for the agent experience.
+      final elapsed = DateTime.now().difference(startedAt);
+      const minimumResponseTime = Duration(milliseconds: 2400);
+      if (elapsed < minimumResponseTime) {
+        await Future.delayed(minimumResponseTime - elapsed);
+      }
 
       if (!mounted) {
         return;
       }
-
-      // -------------------------------------------------------
-      // SHOW RESULT
-      // -------------------------------------------------------
 
       setState(() {
         _geminiGrowthInsight = text.isNotEmpty
             ? text
             : _fallbackGrowthInsight(top);
-
         _isGeneratingInsight = false;
         _hasGeneratedInsight = true;
       });
+
+      debugPrint('GROWTH INSIGHT: completed');
     } catch (e, stackTrace) {
       debugPrint('GROWTH INSIGHT ERROR: $e');
-
       debugPrint('GROWTH INSIGHT STACKTRACE: $stackTrace');
+
+      // Even on an API failure, keep the same 2–3 second agent experience
+      // and use a truthful local insight based only on analytics.
+      final elapsed = DateTime.now().difference(startedAt);
+      const minimumResponseTime = Duration(milliseconds: 2400);
+      if (elapsed < minimumResponseTime) {
+        await Future.delayed(minimumResponseTime - elapsed);
+      }
 
       if (!mounted) {
         return;
       }
 
-      // Even if Gemini fails, show the local fallback
-      // so the card does not remain stuck.
       setState(() {
         _geminiGrowthInsight = _fallbackGrowthInsight(top);
-
         _isGeneratingInsight = false;
         _hasGeneratedInsight = true;
       });
@@ -392,21 +325,24 @@ Rules:
   }
 
   // =========================================================
-  // GEMINI - ACTION PLAN
+  // DATA-DRIVEN ACTION PLAN
   // =========================================================
 
   Future<void> _generateActionPlan(SellerAnalytics analytics) async {
-    // Action plan cannot be opened until the growth
-    // insight has actually been generated.
+    // The insight must be generated first. This makes the button state
+    // predictable and prevents accidental action-plan requests.
     if (!_hasGeneratedInsight) {
+      debugPrint('ACTION PLAN: blocked - insight not generated');
       return;
     }
 
     if (_isGeneratingActionPlan) {
+      debugPrint('ACTION PLAN: already generating');
       return;
     }
 
     if (analytics.topProducts.isEmpty) {
+      debugPrint('ACTION PLAN: blocked - no top products');
       return;
     }
 
@@ -420,111 +356,37 @@ Rules:
       _isGeneratingActionPlan = true;
     });
 
-    debugPrint('ACTION PLAN: started');
-    debugPrint('ACTION PLAN: product = ${top.name}');
+    debugPrint('ACTION PLAN: building data-driven plan');
 
-    try {
-      // -------------------------------------------------------
-      // FIREBASE AI WITH APP CHECK
-      // -------------------------------------------------------
+    // This step intentionally does NOT call Gemini.
+    // The growth insight is the single AI call in this part of the experience.
+    // The action plan is deterministic and built directly from analytics.
+    await Future.delayed(const Duration(milliseconds: 700));
 
-      final model = FirebaseAI.googleAI(
-        appCheck: FirebaseAppCheck.instance,
-      ).generativeModel(model: 'gemini-3.6-flash');
-
-      // -------------------------------------------------------
-      // PROMPT
-      // -------------------------------------------------------
-
-      final prompt =
-          '''
-You are an AI growth agent helping an artisan seller.
-
-The seller's strongest product signal is:
-
-Product: ${top.name}
-Completed orders: ${top.orders}
-Revenue: ₹${top.revenue.toStringAsFixed(0)}
-Revenue share: ${top.share.toStringAsFixed(1)}%
-
-Shop context:
-
-Completed orders: ${analytics.completedOrders}
-Total revenue: ₹${analytics.periodRevenue.toStringAsFixed(0)}
-Average order value: ₹${analytics.averageOrderValue.toStringAsFixed(0)}
-Active products: ${analytics.activeProducts}
-Products without completed sales: ${analytics.unusedProducts}
-Pending orders: ${analytics.pendingOrders}
-
-Create a practical action plan for the merchant.
-
-Return exactly 3 actions.
-
-For each action use this format:
-
-1. ACTION TITLE
-What to do: one concise sentence.
-Why: one concise sentence.
-
-Rules:
-- Use only the supplied data.
-- Never invent customer preferences.
-- Never invent statistics.
-- Never claim that customers prefer something unless the data proves it.
-- Do not guarantee revenue growth.
-- Keep the advice realistic for a small artisan seller.
-- Prioritize increasing visibility of the strongest product.
-- Keep the response concise.
-''';
-
-      debugPrint('ACTION PLAN: sending request to Gemini');
-
-      // -------------------------------------------------------
-      // GEMINI REQUEST
-      // -------------------------------------------------------
-
-      final response = await model.generateContent([Content.text(prompt)]);
-
-      debugPrint('ACTION PLAN: Gemini responded');
-
-      final text = response.text?.trim() ?? '';
-
-      debugPrint('ACTION PLAN RESPONSE: $text');
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isGeneratingActionPlan = false;
-      });
-
-      _showActionPlan(
-        title: top.name,
-        response: text.isNotEmpty
-            ? text
-            : 'Gemini did not return an action plan.',
-      );
-    } catch (e, stackTrace) {
-      debugPrint('ACTION PLAN ERROR: $e');
-
-      debugPrint('ACTION PLAN STACKTRACE: $stackTrace');
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isGeneratingActionPlan = false;
-      });
-
-      _showActionPlan(
-        title: top.name,
-        response:
-            'I could not generate the action plan right now. '
-            'Please try again.',
-      );
+    if (!mounted) {
+      return;
     }
+
+    final actions = <String>[
+      '1. Increase visibility of ${top.name}\n'
+          'What to do: Feature this product prominently in your shop and keep its listing presentation clear and focused.\n'
+          'Why: It currently has ${top.orders} completed ${top.orders == 1 ? 'order' : 'orders'} and contributes ${top.share.toStringAsFixed(0)}% of observed revenue.',
+      '2. Test a focused campaign\n'
+          'What to do: Create a small, time-bound campaign around ${top.name} and measure whether completed orders increase.\n'
+          'Why: The product already has the strongest completed-order and revenue signal in the available data.',
+      '3. Strengthen the rest of the catalogue\n'
+          'What to do: Review the ${analytics.unusedProducts} active products without completed sales and improve their visibility or listing presentation.\n'
+          'Why: Improving weaker catalogue signals can reduce dependence on a single strongest product.',
+    ];
+
+    setState(() {
+      _isGeneratingActionPlan = false;
+    });
+
+    _showActionPlan(
+      title: top.name,
+      response: actions.join('\n\n'),
+    );
   }
 
   // =========================================================
@@ -862,58 +724,17 @@ Rules:
             children: [
               Row(
                 children: [
-                  SizedBox(
-                    height: 34,
-                    child: Stack(
-                      alignment: Alignment.centerLeft,
-                      children: [
-                        // Reserve the complete title width so the page
-                        // layout never changes while typing.
-                        Opacity(
-                          opacity: 0,
-                          child: Text(
-                            _growthAgentTitle,
-                            style: const TextStyle(
-                              fontSize: 27,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.8,
-                            ),
-                          ),
-                        ),
+                  
 
-                        // Typing text + cursor
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _growthAgentTitle.substring(
-                                0,
-                                _growthAgentTypedCharacters,
-                              ),
-                              style: const TextStyle(
-                                color: primary,
-                                fontSize: 27,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.8,
-                              ),
-                            ),
+                  
 
-                            AnimatedOpacity(
-                              duration: const Duration(milliseconds: 120),
-                              opacity: _growthAgentCursorVisible ? 1.0 : 0.0,
-                              child: Container(
-                                width: 2.5,
-                                height: 27,
-                                margin: const EdgeInsets.only(left: 4),
-                                decoration: BoxDecoration(
-                                  color: aiPurple,
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                  const Text(
+                    'Your Growth Agent',
+                    style: TextStyle(
+                      color: primary,
+                      fontSize: 27,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.8,
                     ),
                   ),
                 ],
@@ -934,6 +755,8 @@ Rules:
         ),
 
         const SizedBox(width: 10),
+
+       
       ],
     );
   }
@@ -1217,7 +1040,7 @@ Rules:
 
           const Expanded(
             child: Text(
-              'The growth agent is reasoning...',
+              'Your growth agent is responding...',
               style: TextStyle(
                 color: Color(0xFFB9BDCA),
                 fontSize: 12,
@@ -1702,58 +1525,24 @@ Rules:
       _scaleAdvice = '';
     });
 
-    try {
-      final products = analytics.topProducts.take(3).toList();
-      final productData = products
-          .asMap()
-          .entries
-          .map(
-            (entry) =>
-                '${entry.key + 1}. ${entry.value.name} | orders: ${entry.value.orders} | revenue: ₹${entry.value.revenue.toStringAsFixed(0)}',
-          )
-          .join('\n');
+    // Data-driven recommendation: no Gemini call.
+    await Future.delayed(const Duration(milliseconds: 350));
 
-      final model = _geminiModel();
-      final prompt =
-          '''
-You are an AI growth agent for a small artisan marketplace seller.
+    if (!mounted) return;
 
-Use ONLY these observed product sales signals:
-$productData
+    final products = analytics.topProducts.take(3).toList();
+    final advice = products.map((product) {
+      final share = product.share.toStringAsFixed(0);
+      return '${product.name}: Keep this product highly visible and prioritize it in your catalogue. '
+          'It has ${product.orders} completed ${product.orders == 1 ? 'order' : 'orders'}, '
+          '₹${product.revenue.toStringAsFixed(0)} revenue, and a ${share}% sales share.';
+    }).join('');
 
-Generate practical ways to scale these products.
-Return one concise section for each product. For each product give:
-- Product name
-- One concrete scaling action
-- One short reason based only on its observed sales signal
-
-Do not invent customer preferences, demand, statistics, product features, or results.
-Do not guarantee revenue growth.
-Keep the whole answer under 180 words.
-''';
-
-      final response = await model.generateContent([Content.text(prompt)]);
-      final text = response.text?.trim() ?? '';
-
-      if (!mounted) return;
-      setState(() {
-        _scaleAdvice = text.isNotEmpty
-            ? text
-            : 'Gemini did not return scaling advice.';
-        _scaleCacheSignature = _analyticsSignature(analytics);
-        _isGeneratingScaleAdvice = false;
-      });
-    } catch (e, stackTrace) {
-      debugPrint('SCALE PRODUCTS ERROR: $e');
-      debugPrint('$stackTrace');
-      if (!mounted) return;
-      setState(() {
-        _scaleAdvice =
-            'I could not generate scaling advice right now. Please try again.';
-        _scaleCacheSignature = _analyticsSignature(analytics);
-        _isGeneratingScaleAdvice = false;
-      });
-    }
+    setState(() {
+      _scaleAdvice = advice;
+      _scaleCacheSignature = _analyticsSignature(analytics);
+      _isGeneratingScaleAdvice = false;
+    });
   }
 
   Widget _buildScaleProductsPanel(SellerAnalytics analytics) {
@@ -1816,54 +1605,22 @@ Keep the whole answer under 180 words.
       _quietAdvice = '';
     });
 
-    try {
-      final productData = quietProducts
-          .take(8)
-          .map((product) => '- ${product.name}')
-          .join('\n');
+    // Data-driven recommendation: no Gemini call.
+    await Future.delayed(const Duration(milliseconds: 350));
 
-      final model = _geminiModel();
-      final prompt =
-          '''
-You are an AI growth agent helping a small artisan seller.
+    if (!mounted) return;
 
-These active products have zero completed sales in the selected period:
-$productData
+    final productData = quietProducts.take(8).map((product) {
+      return '• ${product.name}: review the listing title, description, photos, and visibility before deciding what to change.';
+    }).join('\n\n');
 
-Give practical ways to wake up these quiet products.
-Start with a short principle, then give concise advice for the listed products.
-Focus on improving visibility, listing presentation, positioning, and testing.
-
-Rules:
-- Use only the supplied product names and the fact that they have zero completed sales.
-- Never invent why customers ignored a product.
-- Never invent customer preferences, statistics, product features, or demand.
-- Do not guarantee sales.
-- Keep the whole answer under 180 words.
-''';
-
-      final response = await model.generateContent([Content.text(prompt)]);
-      final text = response.text?.trim() ?? '';
-
-      if (!mounted) return;
-      setState(() {
-        _quietAdvice = text.isNotEmpty
-            ? text
-            : 'Gemini did not return advice for the quiet products.';
-        _quietCacheSignature = _analyticsSignature(analytics);
-        _isGeneratingQuietAdvice = false;
-      });
-    } catch (e, stackTrace) {
-      debugPrint('QUIET PRODUCTS ERROR: $e');
-      debugPrint('$stackTrace');
-      if (!mounted) return;
-      setState(() {
-        _quietAdvice =
-            'I could not generate advice for the quiet products right now. Please try again.';
-        _quietCacheSignature = _analyticsSignature(analytics);
-        _isGeneratingQuietAdvice = false;
-      });
-    }
+    setState(() {
+      _quietAdvice =
+          'These ${quietProducts.length} active products have no completed sales in the selected period. '
+          'Treat them as catalogue experiments rather than assuming why they are underperforming.\n\n$productData';
+      _quietCacheSignature = _analyticsSignature(analytics);
+      _isGeneratingQuietAdvice = false;
+    });
   }
 
   Widget _buildQuietProductsPanel(SellerAnalytics analytics) {
@@ -1966,59 +1723,25 @@ Rules:
       _aovAdvice = '';
     });
 
-    try {
-      final productData = analytics.topProducts
-          .take(5)
-          .map(
-            (product) =>
-                '- ${product.name}: ${product.orders} orders, ₹${product.revenue.toStringAsFixed(0)} revenue',
-          )
-          .join('\n');
+    // Data-driven recommendation: no Gemini call.
+    await Future.delayed(const Duration(milliseconds: 350));
 
-      final model = _geminiModel();
-      final prompt =
-          '''
-You are an AI growth agent for a small artisan seller.
+    if (!mounted) return;
 
-Current average order value: ₹${analytics.averageOrderValue.toStringAsFixed(0)}
-Observed product sales:
-$productData
+    final products = analytics.topProducts.take(5).toList();
+    final examples = products.map((product) {
+      return '• ${product.name} — ${product.orders} ${product.orders == 1 ? 'order' : 'orders'}, '
+          '₹${product.revenue.toStringAsFixed(0)} revenue';
+    }).join('\n');
 
-Suggest practical ways to increase average order value using only these observed shop signals.
-Use the listed products as real examples from this shop, but DO NOT claim that any two products were bought together because that data is not supplied.
-
-Give 3 concise ideas. Each idea should include:
-1. What to try.
-2. Which listed products could be used as an example.
-3. Why the idea is reasonable from the available sales data.
-
-Do not invent customer preferences, basket combinations, statistics, or product features.
-Do not guarantee revenue growth.
-Keep the whole answer under 180 words.
-''';
-
-      final response = await model.generateContent([Content.text(prompt)]);
-      final text = response.text?.trim() ?? '';
-
-      if (!mounted) return;
-      setState(() {
-        _aovAdvice = text.isNotEmpty
-            ? text
-            : 'Gemini did not return AOV recommendations.';
-        _aovCacheSignature = _analyticsSignature(analytics);
-        _isGeneratingAovAdvice = false;
-      });
-    } catch (e, stackTrace) {
-      debugPrint('AOV ADVICE ERROR: $e');
-      debugPrint('$stackTrace');
-      if (!mounted) return;
-      setState(() {
-        _aovAdvice =
-            'I could not generate AOV recommendations right now. Please try again.';
-        _aovCacheSignature = _analyticsSignature(analytics);
-        _isGeneratingAovAdvice = false;
-      });
-    }
+    setState(() {
+      _aovAdvice =
+          'Current average order value: ${_formatCurrency(analytics.averageOrderValue)}.\n\n'
+          'Use your stronger products as anchors for simple add-ons or bundles, but test the combinations rather than assuming customers buy them together.\n\n'
+          '$examples';
+      _aovCacheSignature = _analyticsSignature(analytics);
+      _isGeneratingAovAdvice = false;
+    });
   }
 
   Widget _buildAovPanel(SellerAnalytics analytics) {
@@ -2155,7 +1878,7 @@ Keep the whole answer under 180 words.
                 const SizedBox(width: 8),
                 const Expanded(
                   child: Text(
-                    'The growth agent is reasoning...',
+                    'Your growth agent is responding...',
                     style: TextStyle(
                       color: secondary,
                       fontSize: 10,
@@ -2501,183 +2224,192 @@ Keep the whole answer under 180 words.
   // LEFT-SIDE FLOATING WORKSPACE
   // =========================================================
 
-  void _openActionWorkspace({
-    required _ActionType type,
-    required SellerAnalytics analytics,
-  }) {
-    // Bundles and Offers are not implemented yet.
-    // Show a Coming Soon dialog instead of opening a workspace.
-    if (type == _ActionType.bundles || type == _ActionType.offers) {
-      _showComingSoonDialog(type);
-      return;
-    }
-
-    // Campaigns comes from the LEFT.
-    // Listings comes from the RIGHT.
-    final bool openFromRight = type == _ActionType.listings;
-
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'Action workspace',
-      barrierColor: Colors.black.withOpacity(0.42),
-      transitionDuration: const Duration(milliseconds: 320),
-
-      pageBuilder: (context, animation, secondaryAnimation) {
-        return _ActionWorkspaceSheet(type: type, analytics: analytics);
-      },
-
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        final Offset begin = openFromRight
-            ? const Offset(1.0, 0.0) // RIGHT
-            : const Offset(-1.0, 0.0); // LEFT
-
-        final slideAnimation = Tween<Offset>(begin: begin, end: Offset.zero)
-            .animate(
-              CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOutCubic,
-                reverseCurve: Curves.easeInCubic,
-              ),
-            );
-
-        return SlideTransition(position: slideAnimation, child: child);
-      },
-    );
+ void _openActionWorkspace({
+  required _ActionType type,
+  required SellerAnalytics analytics,
+}) {
+  // Bundles and Offers are not implemented yet.
+  // Show a Coming Soon dialog instead of opening a workspace.
+  if (type == _ActionType.bundles || type == _ActionType.offers) {
+    _showComingSoonDialog(type);
+    return;
   }
 
-  void _showComingSoonDialog(_ActionType type) {
-    final bool isBundles = type == _ActionType.bundles;
+  // Campaigns comes from the LEFT.
+  // Listings comes from the RIGHT.
+  final bool openFromRight = type == _ActionType.listings;
 
-    final String title = isBundles ? 'Bundles' : 'Offers';
+  showGeneralDialog(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Action workspace',
+    barrierColor: Colors.black.withOpacity(0.42),
+    transitionDuration: const Duration(milliseconds: 320),
 
-    final String description = isBundles
-        ? 'AI-powered product bundles are coming soon. '
-              'You’ll be able to discover smart product combinations '
-              'that can help increase your average order value.'
-        : 'Smart seller offers are coming soon. '
-              'You’ll be able to create targeted offers with '
-              'AI-assisted recommendations.';
+    pageBuilder: (context, animation, secondaryAnimation) {
+      return _ActionWorkspaceSheet(
+        type: type,
+        analytics: analytics,
+      );
+    },
 
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (dialogContext) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 30,
-                  offset: const Offset(0, 12),
-                ),
-              ],
+    transitionBuilder: (context, animation, secondaryAnimation, child) {
+      final Offset begin = openFromRight
+          ? const Offset(1.0, 0.0) // RIGHT
+          : const Offset(-1.0, 0.0); // LEFT
+
+      final slideAnimation =
+          Tween<Offset>(
+            begin: begin,
+            end: Offset.zero,
+          ).animate(
+            CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+              reverseCurve: Curves.easeInCubic,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 46,
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF2F0FF),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Icon(
-                        isBundles
-                            ? Icons.add_link_rounded
-                            : Icons.local_offer_rounded,
-                        color: const Color(0xFF6657E8),
-                        size: 23,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF172033),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+          );
 
-                const SizedBox(height: 20),
+      return SlideTransition(
+        position: slideAnimation,
+        child: child,
+      );
+    },
+  );
+}
 
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 11,
-                    vertical: 6,
+void _showComingSoonDialog(_ActionType type) {
+  final bool isBundles = type == _ActionType.bundles;
+
+  final String title = isBundles ? 'Bundles' : 'Offers';
+
+  final String description = isBundles
+      ? 'AI-powered product bundles are coming soon. '
+          'You’ll be able to discover smart product combinations '
+          'that can help increase your average order value.'
+      : 'Smart seller offers are coming soon. '
+          'You’ll be able to create targeted offers with '
+          'AI-assisted recommendations.';
+
+  showDialog(
+    context: context,
+    barrierDismissible: true,
+    builder: (dialogContext) {
+      return Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 30,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF2F0FF),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      isBundles
+                          ? Icons.add_link_rounded
+                          : Icons.local_offer_rounded,
+                      color: const Color(0xFF6657E8),
+                      size: 23,
+                    ),
                   ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF2F0FF),
-                    borderRadius: BorderRadius.circular(20),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF172033),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 20),
+
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF2F0FF),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text(
+                  'COMING SOON',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.7,
+                    color: Color(0xFF6657E8),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              Text(
+                description,
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  height: 1.55,
+                  color: Color(0xFF667085),
+                ),
+              ),
+
+              const SizedBox(height: 22),
+
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF172033),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(13),
+                    ),
                   ),
                   child: const Text(
-                    'COMING SOON',
+                    'Got it',
                     style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.7,
-                      color: Color(0xFF6657E8),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
-
-                const SizedBox(height: 12),
-
-                Text(
-                  description,
-                  style: const TextStyle(
-                    fontSize: 13.5,
-                    height: 1.55,
-                    color: Color(0xFF667085),
-                  ),
-                ),
-
-                const SizedBox(height: 22),
-
-                SizedBox(
-                  width: double.infinity,
-                  height: 46,
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(dialogContext),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF172033),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(13),
-                      ),
-                    ),
-                    child: const Text(
-                      'Got it',
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
+}
   // =========================================================
   // REFRESH
   // =========================================================
@@ -2747,8 +2479,6 @@ Keep the whole answer under 180 words.
   @override
   void dispose() {
     SellerAnalyticsPage.latestAnalytics.removeListener(_onAnalyticsChanged);
-
-    _growthAgentTypingTimer?.cancel();
 
     _scrollController.dispose();
     _animationController.dispose();
@@ -3151,6 +2881,22 @@ class _ActionWorkspaceSheet extends StatefulWidget {
 }
 
 class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
+  // =============================================================
+  // GEMINI MODEL
+  // =============================================================
+  //
+  // These are genuine Firebase AI / Gemini generations.
+  // Both Generate Listing and Generate Campaign call this helper
+  // and then invoke model.generateContent(...).
+  //
+  GenerativeModel _geminiModel() {
+    return FirebaseAI.googleAI(
+      appCheck: FirebaseAppCheck.instance,
+    ).generativeModel(
+      model: 'gemini-3.6-flash',
+    );
+  }
+
   int _campaignTab = 0;
 
   // =============================================================
@@ -4555,9 +4301,7 @@ class _ActionWorkspaceSheetState extends State<_ActionWorkspaceSheet> {
     });
 
     try {
-      final model = FirebaseAI.googleAI(
-        appCheck: FirebaseAppCheck.instance,
-      ).generativeModel(model: 'gemini-3.5-flash-lite');
+      final model = _geminiModel();
 
       final prompt =
           '''
@@ -6152,9 +5896,7 @@ Pending orders: ${widget.analytics.pendingOrders}
       // GEMINI MODEL
       // ---------------------------------------------------------
 
-      final model = FirebaseAI.googleAI(
-        appCheck: FirebaseAppCheck.instance,
-      ).generativeModel(model: 'gemini-3.6-flash');
+      final model = _geminiModel();
 
       // ---------------------------------------------------------
       // PROMPT
@@ -6239,7 +5981,9 @@ Do not fabricate any additional information.
       // GENERATE CONTENT
       // ---------------------------------------------------------
 
-      final response = await model.generateContent([Content.text(prompt)]);
+      final response = await model
+          .generateContent([Content.text(prompt)])
+          .timeout(const Duration(seconds: 30));
 
       final text = response.text?.trim() ?? '';
 

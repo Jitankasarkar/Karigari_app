@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:proto_app/screens/seller_products_page.dart';
 import 'package:proto_app/screens/seller_orders_page.dart';
+import 'package:proto_app/screens/seller_order_details_page.dart';
 
 class SellerHomePage extends StatefulWidget {
   const SellerHomePage({super.key});
@@ -167,16 +168,81 @@ class _SellerHomePageState extends State<SellerHomePage> {
   // =========================================================
   // OPEN ORDERS
   // =========================================================
-void _openOrders() {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => SellerOrdersPage(
-        sellerId: sellerId,
+
+  void _openOrders() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SellerOrdersPage(
+          sellerId: sellerId,
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
+
+  // =========================================================
+  // OPEN NEW ORDER NOTIFICATION
+  //
+  // The notification remains active while the seller is
+  // viewing the order details.
+  //
+  // When the seller comes back using the back button,
+  // sellerNotification is changed to false.
+  // =========================================================
+
+  Future<void> _openNotificationOrder({
+    required String orderId,
+    required Map<String, dynamic> orderData,
+  }) async {
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SellerOrderDetailsPage(
+            orderId: orderId,
+            orderData: orderData,
+          ),
+        ),
+      );
+
+      // -------------------------------------------------------
+      // Seller returned from the order details page.
+      // Mark this notification as read.
+      // -------------------------------------------------------
+
+      await _firestore
+          .collection('orders')
+          .doc(orderId)
+          .update({
+        'sellerNotification': false,
+      });
+    } catch (e) {
+      debugPrint(
+        "Error opening/clearing order notification: $e",
+      );
+    }
+  }
+
+  // =========================================================
+  // DISMISS NOTIFICATION
+  // =========================================================
+
+  Future<void> _dismissNotification(
+    String orderId,
+  ) async {
+    try {
+      await _firestore
+          .collection('orders')
+          .doc(orderId)
+          .update({
+        'sellerNotification': false,
+      });
+    } catch (e) {
+      debugPrint(
+        "Error dismissing notification: $e",
+      );
+    }
+  }
 
   // =========================================================
   // BUILD
@@ -255,6 +321,91 @@ void _openOrders() {
 
           final orders =
               orderSnapshot.data?.docs ?? [];
+
+          // ===================================================
+          // FIND UNREAD SELLER NOTIFICATIONS
+          //
+          // We intentionally filter this on the client side.
+          //
+          // This means we can keep the existing Firestore
+          // sellerId query and don't need a composite index.
+          //
+          // Any order created by the buyer with:
+          //
+          // sellerNotification: true
+          //
+          // will appear here even if the seller was offline
+          // when the order was created.
+          // ===================================================
+
+          final notificationOrders =
+              orders.where((doc) {
+            final data =
+                doc.data()
+                    as Map<String, dynamic>;
+
+            return data['sellerNotification'] ==
+                true;
+          }).toList();
+
+          // ===================================================
+          // SORT NOTIFICATIONS BY LATEST ORDER
+          // ===================================================
+
+          notificationOrders.sort(
+            (a, b) {
+              final aData =
+                  a.data()
+                      as Map<String, dynamic>;
+
+              final bData =
+                  b.data()
+                      as Map<String, dynamic>;
+
+              final Timestamp? aTime =
+                  aData['timestamp']
+                          is Timestamp
+                      ? aData['timestamp']
+                          as Timestamp
+                      : null;
+
+              final Timestamp? bTime =
+                  bData['timestamp']
+                          is Timestamp
+                      ? bData['timestamp']
+                          as Timestamp
+                      : null;
+
+              if (aTime == null &&
+                  bTime == null) {
+                return 0;
+              }
+
+              if (aTime == null) {
+                return 1;
+              }
+
+              if (bTime == null) {
+                return -1;
+              }
+
+              return bTime.compareTo(
+                aTime,
+              );
+            },
+          );
+
+          // ===================================================
+          // MOST RECENT UNREAD NOTIFICATION
+          // ===================================================
+
+          QueryDocumentSnapshot?
+              notificationOrder;
+
+          if (notificationOrders.isNotEmpty) {
+            notificationOrder =
+                notificationOrders.first;
+          }
 
           // ===================================================
           // STATIC DASHBOARD COUNTS
@@ -399,8 +550,27 @@ void _openOrders() {
                   _buildShopHero(),
 
                   const SizedBox(
-                    height: 24,
+                    height: 16,
                   ),
+
+                  // =================================================
+                  // NEW ORDER NOTIFICATION
+                  // =================================================
+
+                  if (notificationOrder != null)
+                    _buildOrderNotification(
+                      orderId:
+                          notificationOrder!.id,
+                      orderData:
+                          notificationOrder!
+                                  .data()
+                              as Map<String, dynamic>,
+                    ),
+
+                  if (notificationOrder != null)
+                    const SizedBox(
+                      height: 24,
+                    ),
 
                   // =================================================
                   // OVERVIEW HEADER
@@ -565,7 +735,6 @@ void _openOrders() {
                                   title:
                                       "Pending",
 
-                                  // Only this number changes.
                                   value:
                                       pendingOrders
                                           .toString(),
@@ -598,7 +767,6 @@ void _openOrders() {
                                   title:
                                       "Completed",
 
-                                  // Only this number changes.
                                   value:
                                       completedOrders
                                           .toString(),
@@ -688,6 +856,328 @@ void _openOrders() {
             ),
           );
         },
+      ),
+    );
+  }
+
+  // =========================================================
+  // NEW ORDER NOTIFICATION
+  // =========================================================
+
+  Widget _buildOrderNotification({
+    required String orderId,
+    required Map<String, dynamic> orderData,
+  }) {
+    final String productName =
+        orderData['productName']
+                ?.toString()
+                .trim()
+                .isNotEmpty ==
+            true
+        ? orderData['productName']
+            .toString()
+            .trim()
+        : "New Order";
+
+    final String buyerName =
+        orderData['fullName']
+                ?.toString()
+                .trim()
+                .isNotEmpty ==
+            true
+        ? orderData['fullName']
+            .toString()
+            .trim()
+        : "Customer";
+
+    final double price =
+        _getPrice(
+      orderData['productPrice'],
+    );
+
+    return Material(
+      color: Colors.transparent,
+
+      child: InkWell(
+        borderRadius:
+            BorderRadius.circular(
+          22,
+        ),
+
+        onTap: () {
+          _openNotificationOrder(
+            orderId: orderId,
+            orderData: orderData,
+          );
+        },
+
+        child: Container(
+          width: double.infinity,
+
+          padding:
+              const EdgeInsets.all(
+            15,
+          ),
+
+          decoration:
+              BoxDecoration(
+            gradient:
+                const LinearGradient(
+              begin:
+                  Alignment.topLeft,
+
+              end:
+                  Alignment.bottomRight,
+
+              colors: [
+                Color(0xFFFFF4E5),
+                Color(0xFFFFE9CD),
+              ],
+            ),
+
+            borderRadius:
+                BorderRadius.circular(
+              22,
+            ),
+
+            border:
+                Border.all(
+              color:
+                  const Color(
+                0xFFF1C98F,
+              ),
+            ),
+
+            boxShadow: [
+              BoxShadow(
+                color:
+                    Colors.black.withOpacity(
+                  0.035,
+                ),
+
+                blurRadius:
+                    14,
+
+                offset:
+                    const Offset(
+                  0,
+                  6,
+                ),
+              ),
+            ],
+          ),
+
+          child: Row(
+            crossAxisAlignment:
+                CrossAxisAlignment.center,
+
+            children: [
+
+              // =====================================================
+              // NOTIFICATION ICON
+              // =====================================================
+
+              Container(
+                width: 48,
+                height: 48,
+
+                decoration:
+                    BoxDecoration(
+                  color:
+                      Colors.white
+                          .withOpacity(
+                    0.72,
+                  ),
+
+                  borderRadius:
+                      BorderRadius.circular(
+                    16,
+                  ),
+                ),
+
+                child:
+                    const Icon(
+                  Icons
+                      .notifications_active_rounded,
+
+                  color:
+                      deepOrange,
+
+                  size: 25,
+                ),
+              ),
+
+              const SizedBox(
+                width: 12,
+              ),
+
+              // =====================================================
+              // NOTIFICATION CONTENT
+              // =====================================================
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+
+                  children: [
+
+                    Row(
+                      children: [
+
+                        const Text(
+                          "New order received",
+
+                          style:
+                              TextStyle(
+                            fontSize: 13,
+                            fontWeight:
+                                FontWeight.w800,
+                            color:
+                                textPrimary,
+                          ),
+                        ),
+
+                        const SizedBox(
+                          width: 7,
+                        ),
+
+                        Container(
+                          width: 6,
+                          height: 6,
+
+                          decoration:
+                              const BoxDecoration(
+                            color:
+                                deepOrange,
+
+                            shape:
+                                BoxShape.circle,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(
+                      height: 4,
+                    ),
+
+                    Text(
+                      "$productName • $buyerName",
+
+                      maxLines:
+                          1,
+
+                      overflow:
+                          TextOverflow.ellipsis,
+
+                      style:
+                          const TextStyle(
+                        fontSize: 11,
+                        fontWeight:
+                            FontWeight.w600,
+                        color:
+                            textSecondary,
+                      ),
+                    ),
+
+                    const SizedBox(
+                      height: 3,
+                    ),
+
+                    Text(
+                      "₹${price.toStringAsFixed(0)}  •  Tap to view order",
+
+                      style:
+                          const TextStyle(
+                        fontSize: 10,
+                        color:
+                            Color(
+                          0xFF9A6A35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(
+                width: 8,
+              ),
+
+              // =====================================================
+              // ARROW + CLOSE
+              // =====================================================
+
+              Column(
+                mainAxisSize:
+                    MainAxisSize.min,
+
+                children: [
+
+                  Container(
+                    width: 32,
+                    height: 32,
+
+                    decoration:
+                        BoxDecoration(
+                      color:
+                          Colors.white
+                              .withOpacity(
+                        0.72,
+                      ),
+
+                      shape:
+                          BoxShape.circle,
+                    ),
+
+                    child:
+                        const Icon(
+                      Icons
+                          .arrow_forward_rounded,
+
+                      size: 17,
+
+                      color:
+                          deepOrange,
+                    ),
+                  ),
+
+                  const SizedBox(
+                    height: 4,
+                  ),
+
+                  GestureDetector(
+                    onTap: () {
+                      _dismissNotification(
+                        orderId,
+                      );
+                    },
+
+                    child: const Padding(
+                      padding:
+                          EdgeInsets.all(
+                        3,
+                      ),
+
+                      child:
+                          Icon(
+                        Icons.close_rounded,
+
+                        size: 15,
+
+                        color:
+                            Color(
+                          0xFF9A6A35,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

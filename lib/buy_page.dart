@@ -586,7 +586,7 @@ class _BuyPageState extends State<BuyPage> with SingleTickerProviderStateMixin {
                 status == "done"
                     ? "confirmed"
                     : "pending",
-
+            "sellerNotification": true,
             // =================================================
             // TIMESTAMP
             // =================================================
