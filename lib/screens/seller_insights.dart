@@ -43,6 +43,13 @@ class _SellerInsightsState extends State<SellerInsights>
   // =========================================================
 
   late final AnimationController _animationController;
+  Timer? _growthAgentTypingTimer;
+  Timer? _growthAgentCursorTimer;
+
+  static const String _growthAgentTitle = 'Your Growth Agent';
+
+  int _growthAgentTypedCharacters = 0;
+  bool _growthAgentCursorVisible = true;
 
   // =========================================================
   // SCROLL
@@ -113,6 +120,7 @@ class _SellerInsightsState extends State<SellerInsights>
     );
 
     _animationController.forward();
+    _startGrowthAgentTyping();
 
     // ---------------------------------------------------------
     // Scroll controller
@@ -141,9 +149,59 @@ class _SellerInsightsState extends State<SellerInsights>
       });
     }
   }
+
   // =========================================================
   // ANALYTICS LISTENER
   // =========================================================
+  void _startGrowthAgentTyping() {
+    _growthAgentTypingTimer?.cancel();
+    _growthAgentCursorTimer?.cancel();
+
+    _growthAgentTypedCharacters = 0;
+    _growthAgentCursorVisible = true;
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    // Blinking cursor.
+    _growthAgentCursorTimer = Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) {
+        if (!mounted) return;
+
+        setState(() {
+          _growthAgentCursorVisible = !_growthAgentCursorVisible;
+        });
+      },
+    );
+
+    // Letter-by-letter typing.
+    _growthAgentTypingTimer = Timer.periodic(const Duration(milliseconds: 85), (
+      timer,
+    ) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      if (_growthAgentTypedCharacters < _growthAgentTitle.length) {
+        setState(() {
+          _growthAgentTypedCharacters++;
+        });
+      } else {
+        timer.cancel();
+
+        // Keep the complete title visible for a moment,
+        // then restart the typing cycle.
+        Future.delayed(const Duration(milliseconds: 1800), () {
+          if (!mounted) return;
+
+          _startGrowthAgentTyping();
+        });
+      }
+    });
+  }
 
   void _onAnalyticsChanged() {
     final analytics = SellerAnalyticsPage.latestAnalytics.value;
@@ -804,29 +862,58 @@ Rules:
             children: [
               Row(
                 children: [
-                  Container(
-                    width: 34,
+                  SizedBox(
                     height: 34,
-                    decoration: BoxDecoration(
-                      color: aiPurple,
-                      borderRadius: BorderRadius.circular(11),
-                    ),
-                    child: const Icon(
-                      Icons.auto_awesome_rounded,
-                      color: Colors.white,
-                      size: 19,
-                    ),
-                  ),
+                    child: Stack(
+                      alignment: Alignment.centerLeft,
+                      children: [
+                        // Reserve the complete title width so the page
+                        // layout never changes while typing.
+                        Opacity(
+                          opacity: 0,
+                          child: Text(
+                            _growthAgentTitle,
+                            style: const TextStyle(
+                              fontSize: 27,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.8,
+                            ),
+                          ),
+                        ),
 
-                  const SizedBox(width: 10),
+                        // Typing text + cursor
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _growthAgentTitle.substring(
+                                0,
+                                _growthAgentTypedCharacters,
+                              ),
+                              style: const TextStyle(
+                                color: primary,
+                                fontSize: 27,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.8,
+                              ),
+                            ),
 
-                  const Text(
-                    'AI Growth',
-                    style: TextStyle(
-                      color: primary,
-                      fontSize: 29,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.8,
+                            AnimatedOpacity(
+                              duration: const Duration(milliseconds: 120),
+                              opacity: _growthAgentCursorVisible ? 1.0 : 0.0,
+                              child: Container(
+                                width: 2.5,
+                                height: 27,
+                                margin: const EdgeInsets.only(left: 4),
+                                decoration: BoxDecoration(
+                                  color: aiPurple,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -835,10 +922,10 @@ Rules:
               const SizedBox(height: 8),
 
               const Text(
-                'Your AI copilot for growing the shop.',
+                'I watch your shop, find opportunities, and suggest your next move',
                 style: TextStyle(
                   color: secondary,
-                  fontSize: 14,
+                  fontSize: 13,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -847,29 +934,6 @@ Rules:
         ),
 
         const SizedBox(width: 10),
-
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          decoration: BoxDecoration(
-            color: aiLight,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.auto_awesome_rounded, color: aiPurple, size: 14),
-              SizedBox(width: 5),
-              Text(
-                'AI',
-                style: TextStyle(
-                  color: aiPurpleDark,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }
@@ -2441,6 +2505,13 @@ Keep the whole answer under 180 words.
     required _ActionType type,
     required SellerAnalytics analytics,
   }) {
+    // Bundles and Offers are not implemented yet.
+    // Show a Coming Soon dialog instead of opening a workspace.
+    if (type == _ActionType.bundles || type == _ActionType.offers) {
+      _showComingSoonDialog(type);
+      return;
+    }
+
     // Campaigns comes from the LEFT.
     // Listings comes from the RIGHT.
     final bool openFromRight = type == _ActionType.listings;
@@ -2471,6 +2542,139 @@ Keep the whole answer under 180 words.
             );
 
         return SlideTransition(position: slideAnimation, child: child);
+      },
+    );
+  }
+
+  void _showComingSoonDialog(_ActionType type) {
+    final bool isBundles = type == _ActionType.bundles;
+
+    final String title = isBundles ? 'Bundles' : 'Offers';
+
+    final String description = isBundles
+        ? 'AI-powered product bundles are coming soon. '
+              'You’ll be able to discover smart product combinations '
+              'that can help increase your average order value.'
+        : 'Smart seller offers are coming soon. '
+              'You’ll be able to create targeted offers with '
+              'AI-assisted recommendations.';
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 30,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF2F0FF),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        isBundles
+                            ? Icons.add_link_rounded
+                            : Icons.local_offer_rounded,
+                        color: const Color(0xFF6657E8),
+                        size: 23,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF172033),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 11,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF2F0FF),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'COMING SOON',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.7,
+                      color: Color(0xFF6657E8),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                Text(
+                  description,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    height: 1.55,
+                    color: Color(0xFF667085),
+                  ),
+                ),
+
+                const SizedBox(height: 22),
+
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF172033),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                    ),
+                    child: const Text(
+                      'Got it',
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
       },
     );
   }
@@ -2543,6 +2747,8 @@ Keep the whole answer under 180 words.
   @override
   void dispose() {
     SellerAnalyticsPage.latestAnalytics.removeListener(_onAnalyticsChanged);
+
+    _growthAgentTypingTimer?.cancel();
 
     _scrollController.dispose();
     _animationController.dispose();
