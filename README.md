@@ -8,7 +8,7 @@
 
 <br>
 
-<img src="screenshots\karigari_readme_all_7_screens_soft.gif.gif" width="100%">
+<img src="screenshots\karigari_readme_all_7_screens_soft.gif" width="100%">
 
 <br><br>
 
