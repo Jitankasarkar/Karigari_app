@@ -1,3 +1,4 @@
+  
 <div align="center">
 
 # 🧵 KARIGARI
@@ -287,186 +288,16 @@ flowchart TD
 
 ---
 
-# 🧩 Application Structure
-
-```text
-Karigari_app/
-│
-├── assets/
-│   └── images/
-│
-├── screenshots/
-│   └── karigari_showcase.gif
-│
-├── lib/
-│   │
-│   ├── Authentication
-│   │   ├── Buyer Login
-│   │   └── Seller Login
-│   │
-│   ├── Buyer
-│   │   ├── Product Catalogue
-│   │   ├── Product Details
-│   │   ├── Cart
-│   │   ├── Checkout
-│   │   └── AI Shopping Assistant
-│   │
-│   ├── Seller
-│   │   ├── Seller Dashboard
-│   │   ├── Seller Home
-│   │   ├── Product Upload
-│   │   ├── Orders
-│   │   ├── Order Details
-│   │   ├── Analytics
-│   │   └── AI Growth
-│   │
-│   └── ...
-│
-├── android/
-├── ios/
-├── pubspec.yaml
-└── README.md
-```
-
-> The application is organized around its buyer and seller experiences and their
-> respective features rather than following a formal architecture pattern such
-> as Clean Architecture or BLoC.
-
----
-
 # 🛠️ Technology Stack
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| 📱 Frontend | Flutter + Dart | Mobile application |
-| 🔐 Authentication | Firebase Authentication | User authentication |
-| 🗄️ Database | Cloud Firestore | Products, orders & seller data |
-| 🤖 AI | Firebase AI | Buyer & seller AI features |
-| 🖼️ Media | Cloudinary | Product images |
-| 💳 Payments | Razorpay | Payment processing |
-
----
-
-# 📊 Seller Intelligence
-
-Karigari turns commerce data into actionable information.
-
-```mermaid
-flowchart LR
-
-    ORDERS["🧾 Orders"]
-    DATA["📊 Data"]
-    ANALYTICS["📈 Analytics"]
-    INSIGHTS["✨ Insights"]
-    ACTION["🚀 Action"]
-
-    ORDERS --> DATA
-    DATA --> ANALYTICS
-    ANALYTICS --> INSIGHTS
-    INSIGHTS --> ACTION
-```
-
-Seller analytics provide visibility into:
-
-- Revenue
-- Orders
-- Order activity
-- Product performance
-- Strong-performing products
-- Products without completed sales
-- Growth opportunities
-
-These insights can lead to:
-
-**Insights → Actions → Listings → Campaigns**
-
----
-
-# 🎨 Design Philosophy
-
-### 🧵 Human
-
-Handmade products are presented as more than inventory.
-
-### ⚡ Simple
-
-Complex technology stays behind a simple shopping and selling experience.
-
-### 🧠 Intelligent
-
-Data and AI should help users **make decisions and take action**.
-
----
-
-# 🔐 Services
-
-```mermaid
-flowchart TB
-
-    KARIGARI["📱 KARIGARI"]
-
-    FIREBASE["🔥 Firebase"]
-    AUTH["Authentication"]
-    DB["Firestore"]
-    AI["Firebase AI"]
-
-    CLOUDINARY["☁️ Cloudinary"]
-    RAZORPAY["💳 Razorpay"]
-
-    KARIGARI --> FIREBASE
-    KARIGARI --> CLOUDINARY
-    KARIGARI --> RAZORPAY
-
-    FIREBASE --> AUTH
-    FIREBASE --> DB
-    FIREBASE --> AI
-```
-
----
-
-# 🎯 Complete User Journey
-
-## Buyer
-
-```mermaid
-flowchart LR
-
-    ONBOARDING["Onboarding"]
-    LOGIN["Sign In"]
-    DISCOVER["Discover"]
-    PRODUCT["Product"]
-    CART["Cart"]
-    CHECKOUT["Checkout"]
-    PAYMENT["Razorpay"]
-    CONFIRMED["Order Confirmed"]
-
-    ONBOARDING --> LOGIN
-    LOGIN --> DISCOVER
-    DISCOVER --> PRODUCT
-    PRODUCT --> CART
-    CART --> CHECKOUT
-    CHECKOUT --> PAYMENT
-    PAYMENT --> CONFIRMED
-```
-
-## Seller
-
-```mermaid
-flowchart LR
-
-    LOGIN["Seller Sign In"]
-    HOME["Seller Home"]
-    ORDER["New Order"]
-    DETAILS["Order Details"]
-    ANALYTICS["Analytics"]
-    GROWTH["AI Growth"]
-
-    LOGIN --> HOME
-    HOME --> ORDER
-    ORDER --> DETAILS
-    DETAILS --> ANALYTICS
-    ANALYTICS --> GROWTH
-```
+| 📱 Frontend | **Flutter + Dart** | Mobile application |
+| 🔐 Authentication | **Firebase Authentication** | User authentication |
+| 🗄️ Database | **Cloud Firestore** | Products, orders & seller data |
+| 🤖 AI | **Firebase AI** | Buyer & seller AI features |
+| 🖼️ Media | **Cloudinary** | Product images |
+| 💳 Payments | **Razorpay** | Payment processing |
 
 ---
 
@@ -524,38 +355,7 @@ Add the required project configuration before running the application.
 
 ---
 
-# 🎬 The Complete Loop
-
-```mermaid
-flowchart LR
-
-    BUYER["🛍️ Buyer"]
-
-    DISCOVER["Discover"]
-    PURCHASE["Purchase"]
-
-    SELLER["🎨 Seller"]
-
-    ORDER["Order"]
-    ANALYTICS["Analytics"]
-    AI["✨ AI Growth"]
-
-    BUYER --> DISCOVER
-    DISCOVER --> PURCHASE
-    PURCHASE --> ORDER
-
-    ORDER --> SELLER
-    SELLER --> ANALYTICS
-    ANALYTICS --> AI
-
-    AI --> SELLER
-```
-
 <div align="center">
-
-### Discover → Purchase → Learn → Grow
-
-<br>
 
 ## 🧵 KARIGARI
 
