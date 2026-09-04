@@ -1,64 +1,109 @@
-# 🧵 Karigari
+<div align="center">
 
-### *Where Every Piece Tells a Handmade Story*
+# 🧵 KARIGARI
 
-Karigari is a full-stack e-commerce mobile application built with Flutter, designed to connect local artisans with buyers through a digital marketplace for handmade products.
+### Where Every Piece Tells a Handmade Story.
 
-The platform provides dedicated experiences for **buyers and sellers**, combining e-commerce, secure payments, seller analytics, and AI-powered shopping and growth tools.
+**An AI-powered digital marketplace connecting artisans with buyers through handmade commerce.**
+
+<br>
+
+<img src="screenshots\karigari_readme_all_7_screens_soft.gif.gif" width="100%">
+
+<br><br>
+
+[![Flutter](https://img.shields.io/badge/Flutter-Framework-02569B?logo=flutter&logoColor=white)](https://flutter.dev/)
+[![Firebase](https://img.shields.io/badge/Firebase-Backend-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com/)
+[![Razorpay](https://img.shields.io/badge/Razorpay-Payments-3395FF?logo=razorpay&logoColor=white)](https://razorpay.com/)
+[![Cloudinary](https://img.shields.io/badge/Cloudinary-Media-3448C5?logo=cloudinary&logoColor=white)](https://cloudinary.com/)
+
+</div>
 
 ---
 
-## ✨ Features
+## ✨ What is Karigari?
 
-### 🛍️ Buyer
+**Karigari** is a full-stack Flutter e-commerce application designed to connect
+**local artisans with buyers through a digital marketplace for handmade products.**
+
+It brings together two sides of commerce:
+
+| 🛍️ Buyer | 🎨 Seller |
+|:---:|:---:|
+| Discover handmade products | Manage products |
+| Explore craft stories | Receive orders |
+| Add to cart | Track sales |
+| Razorpay checkout | View analytics |
+| AI shopping assistant | AI-powered growth tools |
+
+The idea is simple:
+
+> **Make handmade commerce easier to discover, easier to sell, and smarter to grow.**
+
+---
+
+# 💡 Why Karigari?
+
+Local artisans create unique products, but reaching customers and understanding
+their business digitally can be difficult.
+
+Karigari connects the complete journey:
+
+<div align="center">
+
+### **ARTISAN → PRODUCT → DISCOVERY → PURCHASE → DATA → INSIGHT → GROWTH**
+
+</div>
+
+A purchase is not treated as the end of the journey.
+
+**Every order becomes useful business data for the artisan.**
+
+---
+
+# 🚀 What can Karigari do?
+
+### 🛍️ For Buyers
 
 - Browse handmade products
+- Explore categories
 - View product details and craft stories
 - Add products to cart
 - Checkout and place orders
-- Razorpay payment integration
-- AI-powered shopping assistant
+- Pay through Razorpay
+- Use an AI shopping assistant
 
-### 🎨 Seller
+### 🎨 For Sellers
 
+- Seller authentication
 - Seller dashboard
-- Upload and manage products
-- Receive order notifications
-- View orders and order details
-- Sales and product analytics
-- AI-powered growth insights
-- AI-generated product listings
-- AI-generated campaign ideas
+- Upload products
+- Manage product catalogue
+- Receive new-order notifications
+- View order details
+- Track revenue and orders
+- Analyze product performance
+- Generate AI growth insights
+- Generate product listing content
+- Generate campaign ideas
 
 ---
 
-## 🏗️ Architecture
+# 🤖 AI Experience
 
-```mermaid
-flowchart TD
+Karigari uses AI where it can actually improve the experience.
 
-    APP["📱 Flutter App"]
+### Buyer AI
 
-    APP --> AUTH["🔐 Firebase Authentication"]
-    APP --> DB[("🔥 Cloud Firestore")]
-    APP --> AI["✨ Firebase AI"]
-    APP --> CLOUD["☁️ Cloudinary"]
-    APP --> PAY["💳 Razorpay"]
-
-    AUTH --> BUYER["🛍️ Buyer"]
-    AUTH --> SELLER["🎨 Seller"]
-
-    DB --> PRODUCTS["📦 Products"]
-    DB --> ORDERS["🧾 Orders"]
-    DB --> SELLERDATA["🏪 Seller Data"]
-
-    CLOUD --> IMAGES["🖼️ Product Images"]
-
-    BUYER --> AIASSIST["🤖 AI Shopping Assistant"]
-    SELLER --> ANALYTICS["📊 Seller Analytics"]
-    ANALYTICS --> GROWTH["✨ AI Growth"]
-
-    AI --> AIASSIST
-    AI --> GROWTH
-
-    PAY --> ORDERS
+```text
+        BUYER
+          │
+          ▼
+  AI SHOPPING ASSISTANT
+          │
+          ├── Product Discovery
+          ├── Recommendations
+          └── Product Selection
+                    │
+                    ▼
+                   CART
